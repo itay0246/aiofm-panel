@@ -31,10 +31,14 @@ const ago = t => { const m = Math.max(0, Math.round((Date.now() / 1000 - t) / 60
 const clock = t => new Date(t * 1000).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'});
 const words = t => (String(t || '').match(/[A-Za-z0-9'’$]+/g) || []).length;
 const store = {
-  get: k => new Promise(res => { if (tg && tg.CloudStorage && tg.isVersionAtLeast('6.9')) tg.CloudStorage.getItem(k, (e, v) => res(e ? localStorage.getItem('aiofm-' + k) : (v || localStorage.getItem('aiofm-' + k)))); else res(localStorage.getItem('aiofm-' + k)); }),
+  // CloudStorage can stay silent (seen on Telegram Desktop): after 1.5 s use the copy kept in this browser
+  get: k => new Promise(res => { const local = () => localStorage.getItem('aiofm-' + k); const t = setTimeout(() => res(local()), 1500);
+    const done = v => { clearTimeout(t); res(v); };
+    try { if (tg && tg.CloudStorage && tg.isVersionAtLeast('6.9')) tg.CloudStorage.getItem(k, (e, v) => done(e ? local() : (v || local()))); else done(local()); } catch (e) { done(local()); } }),
   set: (k, v) => { try { localStorage.setItem('aiofm-' + k, v); } catch (e) {} if (tg && tg.CloudStorage && tg.isVersionAtLeast('6.9')) tg.CloudStorage.setItem(k, v, () => {}); },
 };
 let BASE = '';
+const TO = ms => (window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
 async function pickBase() {
   if (SAME_ORIGIN) return '';
   const p = qs.get('api');
@@ -49,7 +53,7 @@ async function discover() {
   if (!m || !repo) return false;
   try {
     const r = await fetch(`https://api.github.com/repos/${m[1]}/${repo}/contents/api.json?ref=main&t=${Date.now()}`,
-      {headers: {Accept: 'application/vnd.github.raw'}, cache: 'no-store'});
+      {headers: {Accept: 'application/vnd.github.raw'}, cache: 'no-store', signal: TO(8000)});
     const j = await r.json();
     if (j && /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(j.api) && j.api !== BASE) { BASE = j.api; store.set('api', BASE); return true; }
   } catch (e) {}
@@ -58,7 +62,8 @@ async function discover() {
 async function api(path, body = {}, again = true) {
   let r;
   try {
-    r = await fetch(BASE + '/api/' + path, {method: 'POST', headers: {'Content-Type': 'application/json'},
+    // a dead tunnel can hang a request for minutes: give up after 20 s (jobs run in the background, so calls are short)
+    r = await fetch(BASE + '/api/' + path, {method: 'POST', headers: {'Content-Type': 'application/json'}, signal: TO(path === 'schedule' ? 60000 : 20000),
       credentials: SAME_ORIGIN ? 'same-origin' : 'omit', body: JSON.stringify({initData, ...body})});
   } catch (e) {
     if (again && !SAME_ORIGIN && await discover()) return api(path, body, false);
