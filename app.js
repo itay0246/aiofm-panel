@@ -143,6 +143,11 @@ function saveSnap() {
   while (s.length > 4000 && snap.schedule.items.length) { snap.schedule.items.pop(); s = JSON.stringify(snap); }
   store.set('snap', s);
 }
+function offline() {
+  goAsleep();
+  haptic('error');
+  toast('📵 No connection to the laptop. Nothing was sent; what you typed is saved. Tap it again when you’re back online.', 'err', null, 6500);
+}
 async function goAsleep() {
   S.asleep = true;
   try { const snap = JSON.parse(await store.get('snap') || 'null'); if (snap) { S.home = snap; S.snapAt = snap.t; } } catch (e) {}
@@ -152,14 +157,15 @@ async function retry() { S.asleep = false; S.err = null; render(); await boot2()
 
 /* ---------------------------------------------------------------- jobs */
 async function run(kind, opts = {}) {
-  if (S.asleep) return toast('The laptop is asleep. Try again when it is on.', 'err');
   try {
     const from = dkey('').replace(/:$/, ''), fromView = S.view;
     const j = await api('run', {kind, ...opts});
+    if (S.toastObj && S.toastObj.kind === 'err') S.toastObj = null;
+    if (S.asleep) { S.asleep = false; S.err = null; api('home').then(h => { S.home = h; saveSnap(); }).catch(() => {}); }
     clearDrafts(fromView === 'script' ? '\u0000' : from);
     S.jobs = [j, ...S.jobs.filter(x => x.id !== j.id)];
     S.job = j.id; S.sheet = null; go('job'); poll();
-  } catch (e) { e.offline ? goAsleep() : toast('❌ ' + e.message, 'err', null, 6000); }
+  } catch (e) { e.offline ? offline() : toast('❌ ' + e.message, 'err', null, 6000); }
 }
 let pollT = null;
 async function poll() {
@@ -196,7 +202,7 @@ function bar() {
     <div class="ttl hide-phone">${esc(TITLES[S.view] || '')}</div>
     ${b && b.kie_cr != null ? `<span class="pill">💰 ${Math.round(b.kie_cr).toLocaleString('en-US')} cr ≈ ${esc(b.kie_usd)}</span>` : ''}
     ${DESKTOP ? `<button class="pill" onclick="A.sheet('wm')">${WMODES.find(m => m[0] === S.wm)[1]} ▾</button>` : ''}</header>
-    ${S.asleep ? `<div class="banner">💤 Laptop asleep or offline${S.snapAt ? ` · showing the snapshot from ${clock(S.snapAt)} (${ago(S.snapAt)} ago)` : ' · no snapshot yet'}. Actions wait until it’s back. <u onclick="A.retry()">Try again</u></div>` : ''}
+    ${S.asleep ? `<div class="banner">💤 Laptop asleep or offline${S.snapAt ? ` · showing the snapshot from ${clock(S.snapAt)} (${ago(S.snapAt)} ago)` : ' · no snapshot yet'}. What you type is saved; buttons retry when tapped. <u onclick="A.retry()">Try again</u></div>` : ''}
     ${S.err ? `<div class="banner err">❌ ${esc(S.err)} <u onclick="A.retry()">Retry</u></div>` : ''}`;
 }
 function tabs() {
@@ -216,7 +222,7 @@ function drawLayer() {
   keepFocus(() => { $layer.innerHTML = (sh ? `<div class="sheet-bg" onclick="if(event.target===this)A.sheet(null)"><div class="sheet"><div class="grab"></div>${sh}</div></div>` : '') + t; restoreDrafts($layer); });
 }
 const loading = () => S.asleep ? `<div class="card mut">💤 Not in the snapshot. It loads when the laptop is back (anything you typed here stays).</div>` : `<div class="card mut"><span class="spin"></span> Loading…</div>`;
-const dis = () => S.asleep ? 'disabled' : '';
+const dis = () => '';  // never dead buttons: a tap while offline retries, and says so if it still can't reach the laptop
 
 /* ---------------------------------------------------------------- views */
 const V = {};
@@ -361,7 +367,7 @@ async function loadWeek(sync = false) {
     S.err = null;
     if (sync) { haptic('success'); toast(`✅ Synced with Metricool · ${S.sched.data.items.filter(i => i.status !== 'missing').length} posts this week`, 'ok'); }
   } catch (e) {
-    if (e.offline) { S.sched.loading = false; return goAsleep(); }
+    if (e.offline) { S.sched.loading = false; return sync ? offline() : goAsleep(); }
     if (sync) { haptic('error'); toast('❌ Sync failed · ' + e.message + ' · nothing changed', 'err', null, 7000); } else S.err = e.message;
   }
   S.sched.loading = false; render();
@@ -463,14 +469,14 @@ const A = window.A = {
     try { const r = await api('script_save', {id, hook: document.getElementById('ed-h').value, body: document.getElementById('ed-b').value});
       if (!r.ok) throw new Error(r.error); const s = S.scripts.find(x => x.id === id);
       s.hook = document.getElementById('ed-h').value.trim(); s.body = document.getElementById('ed-b').value.trim(); s.words = r.words; clearDrafts(`script:${id}:`); toast(`✅ ${id} saved · ${r.words} words`, 'ok');
-    } catch (e) { e.offline ? goAsleep() : toast('❌ Not saved · ' + e.message, 'err'); }
+    } catch (e) { e.offline ? offline() : toast('❌ Not saved · ' + e.message, 'err'); }
   },
   rewrite(id) { run('rewrite', {ref: id, extra: document.getElementById('ed-h').value + ' ' + document.getElementById('ed-b').value}); },
   async delScript(id) {
     try { const r = await api('script_delete', {id}); if (!r.ok) throw new Error(r.error);
       lastDeleted = id; S.scripts = S.scripts.filter(s => s.id !== id); S.sheet = null; S.view = 'scripts'; S.stack = ['create']; render();
       toast(`🗑 ${id} deleted`, '', true, 10000);
-    } catch (e) { e.offline ? goAsleep() : toast('❌ Not deleted · ' + e.message, 'err'); }
+    } catch (e) { e.offline ? offline() : toast('❌ Not deleted · ' + e.message, 'err'); }
   },
   async undo() { if (!lastDeleted) return; const id = lastDeleted; lastDeleted = null;
     try { const r = await api('script_restore', {id}); if (!r.ok) throw new Error(r.error); S.scripts = (await api('scripts')).scripts; toast(`↩ ${id} restored`, 'ok'); render(); }
@@ -512,7 +518,7 @@ const A = window.A = {
     x.onload = () => { S.upl = null; let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
       if (x.status === 200) { haptic('success'); S.jobs = [j.job, ...S.jobs]; S.job = j.job.id; toast('✅ Uploaded · Hermes is checking it', 'ok'); go('job'); poll(); }
       else { haptic('error'); toast('❌ Upload failed · ' + (j.error || 'HTTP ' + x.status), 'err', null, 7000); render(); } };
-    x.onerror = () => { S.upl = null; toast('❌ Upload failed · the laptop is not reachable', 'err', null, 7000); render(); };
+    x.onerror = () => { S.upl = null; offline(); };
     x.send(f);
   },
   async openBrowser() {
