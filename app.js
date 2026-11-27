@@ -253,7 +253,7 @@ function tgColors() {
 function render() {
   document.body.className = 't-' + S.theme;
   const launch = S.launchBrowser ? `<div class="card launchb"><b>🖥 Full screen windowed</b><p class="mut" style="margin:4px 0 10px">The app opens in your browser (answer Telegram’s “Open this link?” if it asks); this window closes once the browser has it. If nothing opened, tap Open in browser.</p>
-    <div class="row"><button class="btn" onclick="A.openBrowser()">Open in browser</button><button class="btn sec" onclick="tg.close()">Close this window</button><button class="btn sec" onclick="S.launchBrowser=false;render()">Stay here</button></div></div>` : '';
+    <div class="row"><button class="btn" onclick="A.openBrowser()">Open in browser</button><button class="btn sec" onclick="A.closeApp()">Close this window</button><button class="btn sec" onclick="A.stayHere()">Stay here</button></div></div>` : '';
   const v = launch + (['home', 'reels', 'create', 'scripts', 'spending'].includes(S.view) ? notMain() : '') + (V[S.view] || V.home)();
   keepFocus(() => { $app.innerHTML = side() + `<div class="col">${bar()}<main class="main">${v}</main></div>` + tabs(); restoreDrafts($app); });
   if (tg) { S.stack.length && !TOP.includes(S.view) ? tg.BackButton.show() : tg.BackButton.hide(); tgColors(); }
@@ -684,6 +684,8 @@ const A = window.A = {
     S.rec = {id, mr, t0: Date.now()}; mr.start(); haptic('light'); render();
     S.rec.timer = setInterval(() => { const b = document.querySelector('.mic.rec'); if (b) b.textContent = '⏹ ' + Math.floor((Date.now() - S.rec.t0) / 1000) + 's'; if (Date.now() - S.rec.t0 > 300000) stopRec(); }, 500);
   },
+  closeApp() { clearInterval(A._bw); if (tg) tg.close(); },
+  stayHere() { clearInterval(A._bw); S.launchBrowser = false; render(); },  // and don't close when the browser opens later
   async openBrowser(auto = false) {
     try {
       const r = await api('browser_link'); tg.openLink(BASE + r.path);
