@@ -252,7 +252,7 @@ function tgColors() {
 }
 function render() {
   document.body.className = 't-' + S.theme;
-  const launch = S.launchBrowser ? `<div class="card launchb"><b>🖥 Full screen windowed</b><p class="mut" style="margin:4px 0 10px">The app opens in your browser and this window closes. If it didn’t, tap Open in browser.</p>
+  const launch = S.launchBrowser ? `<div class="card launchb"><b>🖥 Full screen windowed</b><p class="mut" style="margin:4px 0 10px">The app opens in your browser (answer Telegram’s “Open this link?” if it asks); this window closes once the browser has it. If nothing opened, tap Open in browser.</p>
     <div class="row"><button class="btn" onclick="A.openBrowser()">Open in browser</button><button class="btn sec" onclick="tg.close()">Close this window</button><button class="btn sec" onclick="S.launchBrowser=false;render()">Stay here</button></div></div>` : '';
   const v = launch + (['home', 'reels', 'create', 'scripts', 'spending'].includes(S.view) ? notMain() : '') + (V[S.view] || V.home)();
   keepFocus(() => { $app.innerHTML = side() + `<div class="col">${bar()}<main class="main">${v}</main></div>` + tabs(); restoreDrafts($app); });
@@ -687,12 +687,14 @@ const A = window.A = {
   async openBrowser(auto = false) {
     try {
       const r = await api('browser_link'); tg.openLink(BASE + r.path);
-      toast('🖥 Opening in your browser…', 'ok');
-      // Close the Telegram window once the browser has it: when the browser takes focus (blur), or after a tap
-      // anyway. At launch (no tap) only on blur, so if Telegram didn't open the link the card stays to tap.
-      const shut = () => { window.removeEventListener('blur', shut); setTimeout(() => tg.close(), 300); };
-      window.addEventListener('blur', shut);
-      setTimeout(() => { window.removeEventListener('blur', shut); if (!auto) tg.close(); }, auto ? 4000 : 1500);
+      toast('🖥 Opening in your browser… answer Telegram’s “Open this link?” if it asks.', 'ok', null, 8000);
+      // Close this Telegram window only once the browser has really opened the one-time link (the laptop sees it
+      // used), so Telegram's "Open this link?" question stays answerable. Checks every second for 2 minutes.
+      const tok = r.path.split('t=')[1]; clearInterval(A._bw); let n = 0;
+      A._bw = setInterval(async () => {
+        if (++n > 120) return clearInterval(A._bw);
+        try { if ((await api('browser_link_used', {t: tok})).used) { clearInterval(A._bw); tg.close(); } } catch (e) {}
+      }, 1000);
     } catch (e) { toast('❌ ' + e.message, 'err'); }
   },
 };
