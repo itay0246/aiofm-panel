@@ -643,7 +643,7 @@ async function boot2() {
 async function boot() {
   S.theme = (await store.get('theme')) || 'creator';
   S.wm = (await store.get('wm')) || 'full';
-  if (!WMODES.some(m => m[0] === S.wm)) S.wm = {max: 'browser', win: 'window'}[S.wm] || 'full';  // values saved by the old test app
+  if (!WMODES.some(m => m[0] === S.wm)) S.wm = 'full';  // values saved by the old test app
   if (!THEMES.some(x => x[0] === S.theme)) S.theme = 'creator';
   if (tg) {
     tg.ready(); tg.expand();
