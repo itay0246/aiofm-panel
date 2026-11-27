@@ -60,6 +60,25 @@ function toast(text, kind = '', undo = null, ms = 3800) {
 }
 const haptic = k => { try { tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(k); } catch (e) {} };
 
+/* ---------------------------------------------------------------- drafts (never lose what Itay typed) */
+const DRAFTS = (() => { try { return JSON.parse(localStorage.getItem('aiofm-drafts') || '{}'); } catch (e) { return {}; } })();
+const dkey = id => `${S.view}:${S.view === 'script' ? S.script : S.view === 'job' ? ((S.jobs.find(x => x.id === S.job) || {}).thread || '') : ''}:${S.sheet ? S.sheet.name + ':' : ''}${id}`;
+function saveDrafts() { try { localStorage.setItem('aiofm-drafts', JSON.stringify(DRAFTS)); } catch (e) {} }
+document.addEventListener('input', e => {
+  const el = e.target; if (!el.id || !/^(TEXTAREA|INPUT)$/.test(el.tagName) || el.closest('.ddp')) return;
+  DRAFTS[dkey(el.id)] = el.value; clearTimeout(saveDrafts.t); saveDrafts.t = setTimeout(saveDrafts, 300);
+});
+function restoreDrafts(root) {
+  root.querySelectorAll('textarea[id], input.field[id]').forEach(el => { const v = DRAFTS[dkey(el.id)]; if (v != null && el.value !== v) el.value = v; });
+  if (S.view === 'script' && document.getElementById('ed-n')) A.count();
+}
+function clearDrafts(prefix) { Object.keys(DRAFTS).forEach(k => { if (k.startsWith(prefix)) delete DRAFTS[k]; }); saveDrafts(); }
+function keepFocus(fn) {  // re-render without losing the cursor in the field being typed in
+  const a = document.activeElement, id = a && a.id, s = a && a.selectionStart, e2 = a && a.selectionEnd;
+  fn();
+  if (id) { const n = document.getElementById(id); if (n && n !== a) { n.focus(); try { n.setSelectionRange(s, e2); } catch (e) {} } }
+}
+
 /* ---------------------------------------------------------------- navigation */
 const TOP = ['home', 'reels', 'create', 'schedule', 'more'];
 function go(view, push = true) {
@@ -110,8 +129,7 @@ function saveSnap() {
 async function goAsleep() {
   S.asleep = true;
   try { const snap = JSON.parse(await store.get('snap') || 'null'); if (snap) { S.home = snap; S.snapAt = snap.t; } } catch (e) {}
-  if (!['home', 'more', 'appearance'].includes(S.view)) S.view = 'home';
-  render();
+  render();  // stay on the same screen: what you typed is kept (drafts) and comes back after "Try again"
 }
 async function retry() { S.asleep = false; S.err = null; render(); await boot2(); }
 
@@ -119,7 +137,9 @@ async function retry() { S.asleep = false; S.err = null; render(); await boot2()
 async function run(kind, opts = {}) {
   if (S.asleep) return toast('The laptop is asleep. Try again when it is on.', 'err');
   try {
+    const from = dkey('').replace(/:$/, ''), fromView = S.view;
     const j = await api('run', {kind, ...opts});
+    clearDrafts(fromView === 'script' ? '\u0000' : from);
     S.jobs = [j, ...S.jobs.filter(x => x.id !== j.id)];
     S.job = j.id; S.sheet = null; go('job'); poll();
   } catch (e) { e.offline ? goAsleep() : toast('❌ ' + e.message, 'err', null, 6000); }
@@ -169,16 +189,16 @@ function tabs() {
 function render() {
   document.body.className = 't-' + S.theme;
   const v = (V[S.view] || V.home)();
-  $app.innerHTML = side() + `<div class="col">${bar()}<main class="main">${v}</main></div>` + tabs();
+  keepFocus(() => { $app.innerHTML = side() + `<div class="col">${bar()}<main class="main">${v}</main></div>` + tabs(); restoreDrafts($app); });
   if (tg) { S.stack.length && !TOP.includes(S.view) ? tg.BackButton.show() : tg.BackButton.hide(); }
   drawLayer();
 }
 function drawLayer() {
   const sh = S.sheet ? SHEETS[S.sheet.name](S.sheet) : '';
   const t = S.toastObj ? `<div class="toast ${S.toastObj.kind}">${esc(S.toastObj.text)}${S.toastObj.undo ? '<button onclick="A.undo()">Undo</button>' : ''}</div>` : '';
-  $layer.innerHTML = (sh ? `<div class="sheet-bg" onclick="if(event.target===this)A.sheet(null)"><div class="sheet"><div class="grab"></div>${sh}</div></div>` : '') + t;
+  keepFocus(() => { $layer.innerHTML = (sh ? `<div class="sheet-bg" onclick="if(event.target===this)A.sheet(null)"><div class="sheet"><div class="grab"></div>${sh}</div></div>` : '') + t; restoreDrafts($layer); });
 }
-const loading = () => `<div class="card mut"><span class="spin"></span> Loading…</div>`;
+const loading = () => S.asleep ? `<div class="card mut">💤 Not in the snapshot. It loads when the laptop is back (anything you typed here stays).</div>` : `<div class="card mut"><span class="spin"></span> Loading…</div>`;
 const dis = () => S.asleep ? 'disabled' : '';
 
 /* ---------------------------------------------------------------- views */
@@ -425,7 +445,7 @@ const A = window.A = {
   async saveScript(id) {
     try { const r = await api('script_save', {id, hook: document.getElementById('ed-h').value, body: document.getElementById('ed-b').value});
       if (!r.ok) throw new Error(r.error); const s = S.scripts.find(x => x.id === id);
-      s.hook = document.getElementById('ed-h').value.trim(); s.body = document.getElementById('ed-b').value.trim(); s.words = r.words; toast(`✅ ${id} saved · ${r.words} words`, 'ok');
+      s.hook = document.getElementById('ed-h').value.trim(); s.body = document.getElementById('ed-b').value.trim(); s.words = r.words; clearDrafts(`script:${id}:`); toast(`✅ ${id} saved · ${r.words} words`, 'ok');
     } catch (e) { e.offline ? goAsleep() : toast('❌ Not saved · ' + e.message, 'err'); }
   },
   rewrite(id) { run('rewrite', {ref: id, extra: document.getElementById('ed-h').value + ' ' + document.getElementById('ed-b').value}); },
