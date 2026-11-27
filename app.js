@@ -300,8 +300,11 @@ V.photos = () => `<h1>Photo ideas</h1><p class="sub">photo-inspiration skill (Th
   <button class="btn" ${dis()} onclick="A.runText('photos','ph',true)">Find photo ideas</button>${jobList(['photos'])}`;
 V.upscale = () => `<h1>Upscale queue</h1><p class="sub">video-upscale · approved takes only · dry run with the cost first.</p>
   <button class="btn" ${dis()} onclick="A.run('upscale')">Show the queue + cost</button>${jobList(['upscale'])}`;
-V.capcut = () => !S.reels ? loading() : `<h1>CapCut</h1><p class="sub">capcut-finishing · steps for CapCut Pro on the phone. Send finals to the bot as File.</p>
-  <div class="list">${S.reels.filter(r => ['capcut', 'upscaled', 'approved'].includes(r.stage)).map(r => `<button class="item" ${dis()} onclick="A.run('capcut',{ref:'${r.id}'})"><div class="ic">✂️</div><div class="tx"><b>${esc(r.id)} · ${esc(r.slug)}</b><span>${esc(r.status)}</span></div><div class="end">Steps ›</div></button>`).join('') || '<div class="item mut">Nothing waiting for CapCut</div>'}</div>`;
+V.capcut = () => !S.reels ? loading() : `<h1>CapCut</h1><p class="sub">capcut-finishing · get the steps, edit in CapCut Pro, then upload the export here (no Telegram size limit while the laptop is on).</p>
+  ${S.upl ? `<div class="card"><b>Uploading ${esc(S.upl.name)}</b><div class="mut">${S.upl.pct}%</div></div>` : ''}
+  <div class="list">${S.reels.filter(r => ['capcut', 'upscaled', 'approved'].includes(r.stage)).map(r => `<div class="item"><div class="ic">✂️</div><div class="tx"><b>${esc(r.id)} · ${esc(r.slug)}</b><span>${esc(r.status)}</span></div>
+    <div class="end" style="display:flex;gap:6px"><button class="btn small sec" ${dis()} onclick="A.run('capcut',{ref:'${r.id}'})">Steps</button><button class="btn small" ${dis()} onclick="A.pickFinal('${r.id}')">⬆ Final</button></div></div>`).join('') || '<div class="item mut">Nothing waiting for CapCut</div>'}</div>
+  <button class="btn sec" ${dis()} onclick="A.pickFinal('')">⬆ Upload another export</button>`;
 V.ask = () => `<h1>Ask Hermes</h1><p class="sub">Same Hermes, skills and rules as on the laptop.</p>
   <textarea id="askt" class="field" placeholder="Ask or tell Hermes anything…"></textarea><div style="height:10px"></div>
   <button class="btn" ${dis()} onclick="A.runText('ask','askt')">Send</button>${jobList(['ask'])}`;
@@ -457,6 +460,23 @@ const A = window.A = {
     if (k === 'full') { if (tg.requestFullscreen && tg.isVersionAtLeast('8.0')) tg.requestFullscreen(); }
     else if (tg.isFullscreen) tg.exitFullscreen();
     if (k === 'browser') A.openBrowser();
+  },
+  pickFinal(reel) {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'video/mp4,video/quicktime,.mp4,.mov';
+    inp.onchange = () => { const f = inp.files[0]; if (f) A.upload(reel, f); }; inp.click();
+  },
+  upload(reel, f) {
+    if (f.size > 95 * 1024 * 1024) return toast('❌ Over 95 MB: the tunnel can’t take it. Export at 1080p / 30 fps.', 'err', null, 7000);
+    const x = new XMLHttpRequest();
+    x.open('PUT', `${BASE}/api/upload?reel=${encodeURIComponent(reel)}&name=${encodeURIComponent(f.name)}`);
+    x.setRequestHeader('X-Init-Data', initData); x.withCredentials = SAME_ORIGIN;
+    S.upl = {name: f.name, pct: 0}; render();
+    x.upload.onprogress = e => { if (e.lengthComputable) { S.upl.pct = Math.round(e.loaded / e.total * 100); render(); } };
+    x.onload = () => { S.upl = null; let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {}
+      if (x.status === 200) { haptic('success'); S.jobs = [j.job, ...S.jobs]; S.job = j.job.id; toast('✅ Uploaded · Hermes is checking it', 'ok'); go('job'); poll(); }
+      else { haptic('error'); toast('❌ Upload failed · ' + (j.error || 'HTTP ' + x.status), 'err', null, 7000); render(); } };
+    x.onerror = () => { S.upl = null; toast('❌ Upload failed · the laptop is not reachable', 'err', null, 7000); render(); };
+    x.send(f);
   },
   async openBrowser() {
     try { const r = await api('browser_link'); tg.openLink(BASE + r.path); toast('🖥 Opening in your browser… maximize it once; the browser keeps the size.', 'ok'); }
