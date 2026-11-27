@@ -236,7 +236,7 @@ function bar() {
   return `<div class="safe-top"></div><header class="bar">${backBtn}<button class="who" onclick="A.sheet('creators')">${avatar()}<div><b>${esc(CR().name)} ▾</b><small>AI OFM Creator · by Snoz</small></div></button>
     <div class="ttl hide-phone">${esc(TITLES[S.view] || '')}</div>
     ${b && b.kie_cr != null ? `<span class="pill">💰 ${Math.round(b.kie_cr).toLocaleString('en-US')} cr ≈ ${esc(b.kie_usd)}</span>` : ''}
-    ${DESKTOP ? `<button class="pill" onclick="A.sheet('wm')">${WMODES.find(m => m[0] === S.wm)[1]} ▾</button>` : ''}</header>
+    ${DESKTOP ? `<button class="pill" onclick="A.sheet('wm')">${(WMODES.find(m => m[0] === S.wm) || WMODES[0])[1]} ▾</button>` : ''}</header>
     ${S.asleep ? `<div class="banner">💤 Laptop asleep or offline${S.snapAt ? ` · showing the snapshot from ${clock(S.snapAt)} (${ago(S.snapAt)} ago)` : ' · no snapshot yet'}. What you type is saved; buttons retry when tapped. <u onclick="A.retry()">Try again</u></div>` : ''}
     ${S.err ? `<div class="banner err">❌ ${esc(S.err)} <u onclick="A.retry()">Retry</u></div>` : ''}`;
 }
@@ -643,6 +643,8 @@ async function boot2() {
 async function boot() {
   S.theme = (await store.get('theme')) || 'creator';
   S.wm = (await store.get('wm')) || 'full';
+  if (!WMODES.some(m => m[0] === S.wm)) S.wm = {max: 'browser', win: 'window'}[S.wm] || 'full';  // values saved by the old test app
+  if (!THEMES.some(x => x[0] === S.theme)) S.theme = 'creator';
   if (tg) {
     tg.ready(); tg.expand();
     tg.BackButton.onClick(back);
