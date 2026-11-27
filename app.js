@@ -86,6 +86,7 @@ document.addEventListener('input', e => {
   DRAFTS[dkey(el.id)] = el.value; clearTimeout(saveDrafts.t); saveDrafts.t = setTimeout(saveDrafts, 300);
 });
 function restoreDrafts(root) {
+  addMics(root);
   root.querySelectorAll('textarea[id], input.field[id]').forEach(el => { const v = DRAFTS[dkey(el.id)]; if (v != null && el.value !== v) el.value = v; });
   if (S.view === 'script' && document.getElementById('ed-n')) A.count();
 }
@@ -94,6 +95,30 @@ function keepFocus(fn) {  // re-render without losing the cursor in the field be
   const a = document.activeElement, id = a && a.id, s = a && a.selectionStart, e2 = a && a.selectionEnd;
   fn();
   if (id) { const n = document.getElementById(id); if (n && n !== a) { n.focus(); try { n.setSelectionRange(s, e2); } catch (e) {} } }
+}
+
+function stopRec() { if (!S.rec) return; clearInterval(S.rec.timer); try { S.rec.mr.stop(); } catch (e) { S.rec = null; render(); } }
+function putRaw(path, body) {  // PUT raw bytes (voice, photo) with the same sign-in as the JSON calls
+  return new Promise((res, rej) => {
+    const x = new XMLHttpRequest(); x.open('PUT', `${BASE}/api/${path}`);
+    x.setRequestHeader('X-Init-Data', initData); x.withCredentials = SAME_ORIGIN;
+    x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {} x.status === 200 ? res(j) : rej(new Error(j.error || 'HTTP ' + x.status)); };
+    x.onerror = () => { const e = new Error('The laptop is not reachable (asleep or offline).'); e.offline = true; rej(e); };
+    x.send(body);
+  });
+}
+const NO_MIC = new Set(['ed-h', 'ed-b']);
+function addMics(root) {
+  root.querySelectorAll('textarea.field[id]').forEach(el => {
+    if (NO_MIC.has(el.id) || el.parentElement.classList.contains('micw')) return;
+    const w = document.createElement('div'); w.className = 'micw'; el.parentNode.insertBefore(w, el); w.appendChild(el);
+    const b = document.createElement('button'); b.type = 'button';
+    const rec = S.rec && S.rec.id === el.id, busy = S.stt === el.id;
+    b.className = 'mic' + (rec ? ' rec' : ''); b.disabled = busy;
+    b.innerHTML = busy ? '<span class="spin"></span>' : rec ? '⏹ ' + Math.floor((Date.now() - S.rec.t0) / 1000) + 's' : '🎤';
+    b.setAttribute('aria-label', rec ? 'Stop recording' : 'Speak instead of typing');
+    b.onclick = () => A.mic(el.id); w.appendChild(b);
+  });
 }
 
 /* ---------------------------------------------------------------- navigation */
@@ -106,7 +131,7 @@ function go(view, push = true) {
   const m = document.querySelector('.main'); if (m) m.scrollTop = 0;
 }
 function back() { const v = S.stack.pop(); if (v) { S.view = v; S.sheet = null; render(); } }
-const TITLES = {home: 'Home', reels: 'Reels', create: 'Create', schedule: 'Schedule', more: 'More', job: 'Hermes', results: 'Results', lessons: 'Lessons',
+const TITLES = {addcreator: 'Add a creator', creatordone: 'New creator', home: 'Home', reels: 'Reels', create: 'Create', schedule: 'Schedule', more: 'More', job: 'Hermes', results: 'Results', lessons: 'Lessons',
   spending: 'Spending', history: 'Chat history', laptop: 'Bot + laptop', accounts: 'Accounts', appearance: 'Appearance', scripts: 'Scripts',
   script: 'Script', copy: 'Copy a reel or post', take: 'Talking-head take', overlay: 'Overlay clip', photos: 'Photo ideas', upscale: 'Upscale queue',
   ask: 'Ask Hermes', reel: 'Reel', capcut: 'CapCut'};
@@ -184,12 +209,17 @@ async function poll() {
 }
 
 /* ---------------------------------------------------------------- layout */
-const CR = () => (S.user && S.user.creators && S.user.creators[0]) || {id: 'creator', name: 'Creator', handle: ''};
-const avatar = (sz = 34) => S.avatar ? `<img class="av" style="width:${sz}px;height:${sz}px" src="${esc(S.avatar)}" alt="">` : `<span class="av" style="width:${sz}px;height:${sz}px">${esc(CR().name.slice(0, 2).toUpperCase())}</span>`;
+const CRS = () => (S.user && S.user.creators) || [];
+const CR = () => CRS().find(c => c.id === S.cr) || CRS()[0] || {id: 'creator', name: 'Creator', handle: '', main: true};
+const furl = u => !u ? null : /^https?:/.test(u) ? u : BASE + (u.startsWith('/f/') ? u : '/f/' + u);
+const avatarOf = (c, sz = 34) => c && c.avatar ? `<img class="av" style="width:${sz}px;height:${sz}px" src="${esc(furl(c.avatar))}" alt="">` : `<span class="av" style="width:${sz}px;height:${sz}px">${esc(((c && c.name) || '?').slice(0, 2).toUpperCase())}</span>`;
+const avatar = (sz = 34) => avatarOf(CR(), sz);
+// Reels, scripts and money are only wired for the main creator's project folder so far
+const notMain = () => !CR().main ? `<div class="card mut">${avatar(22)} <b>${esc(CR().name)}</b> has no project folder in the app yet: reels, scripts and money here are ${esc((CRS().find(c => c.main) || {}).name || 'the main creator')}’s. Her Metricool posts show in Schedule${CR().metricool ? '' : ' once you add her Metricool brand'}.</div>` : '';
 function side() {
   const nav = (v, ic, n) => `<button class="nav ${S.view === v ? 'on' : ''}" onclick="A.go('${v}')">${ic} ${n}</button>`;
   return `<aside class="side"><div class="brand">AI OFM Creator<small>by Snoz</small></div>
-    <div class="who">${avatar(32)}<div><b>${esc(CR().name)}</b><small>${esc(CR().handle)}</small></div></div>
+    <button class="who" onclick="A.sheet('creators')">${avatar(32)}<div><b>${esc(CR().name)} ▾</b><small>${esc(CR().handle)}</small></div></button>
     ${nav('home', '🏠', 'Home')}${nav('reels', '🎬', 'Reels')}${nav('create', '➕', 'Create')}${nav('schedule', '📅', 'Schedule')}
     <div class="grp">More</div>${nav('results', '📊', 'Results')}${nav('lessons', '🧠', 'Lessons')}${nav('spending', '💰', 'Spending')}
     ${nav('history', '💬', 'Chat history')}${nav('laptop', '🤖', 'Bot + laptop')}${nav('accounts', '👥', 'Accounts')}${nav('appearance', '🎨', 'Appearance')}
@@ -198,7 +228,7 @@ function side() {
 function bar() {
   const b = S.home && S.home.balances;
   const backBtn = !TOP.includes(S.view) && !tg ? `<button class="pill" onclick="A.back()">‹ Back</button>` : '';
-  return `<div class="safe-top"></div><header class="bar">${backBtn}<div class="who">${avatar()}<div><b>${esc(CR().name)}</b><small>AI OFM Creator · by Snoz</small></div></div>
+  return `<div class="safe-top"></div><header class="bar">${backBtn}<button class="who" onclick="A.sheet('creators')">${avatar()}<div><b>${esc(CR().name)} ▾</b><small>AI OFM Creator · by Snoz</small></div></button>
     <div class="ttl hide-phone">${esc(TITLES[S.view] || '')}</div>
     ${b && b.kie_cr != null ? `<span class="pill">💰 ${Math.round(b.kie_cr).toLocaleString('en-US')} cr ≈ ${esc(b.kie_usd)}</span>` : ''}
     ${DESKTOP ? `<button class="pill" onclick="A.sheet('wm')">${WMODES.find(m => m[0] === S.wm)[1]} ▾</button>` : ''}</header>
@@ -211,7 +241,7 @@ function tabs() {
 }
 function render() {
   document.body.className = 't-' + S.theme;
-  const v = (V[S.view] || V.home)();
+  const v = (['home', 'reels', 'create', 'scripts', 'spending'].includes(S.view) ? notMain() : '') + (V[S.view] || V.home)();
   keepFocus(() => { $app.innerHTML = side() + `<div class="col">${bar()}<main class="main">${v}</main></div>` + tabs(); restoreDrafts($app); });
   if (tg) { S.stack.length && !TOP.includes(S.view) ? tg.BackButton.show() : tg.BackButton.hide(); }
   drawLayer();
@@ -387,7 +417,7 @@ function ddPanel(key, label, items) {
 }
 V.schedule = () => {
   const s = S.sched, wl = weekLabel(s.wk), ws = weekStart(s.wk);
-  const cr = ((S.user && S.user.creators) || [CR()]).map(c => [c.id, `${avatar(22)}<span>${esc(c.name)}</span>`, !!s.sm[c.id], c.name]);
+  const cr = (CRS().length ? CRS() : [CR()]).map(c => [c.id, `${avatarOf(c, 22)}<span>${esc(c.name)}</span>`, !!s.sm[c.id], c.name]);
   const ty = TYPES.map(t => [t, `<span>${ICON[t]} ${t === 'Story' ? 'Stories' : t + 's'}</span>`, s.types[t], t === 'Story' ? 'Stories' : t + 's']);
   const st = STATS.map(([k, l]) => [k, `<span class="sdot s-${k}"></span><span>${l}</span>`, s.stat[k], l]);
   const all = (s.data && s.data.items) || [];
@@ -407,6 +437,17 @@ V.schedule = () => {
     ${dr.map(r => r.status === 'missing' ? `<button class="post missing" onclick="A.fill('${r.day}','${esc(r.ny)}')"><b>＋ Empty reel slot</b><div class="t">${esc(r.ny)} NY · ${esc(r.il)} IL</div></button>`
       : `<div class="post ${r.status}"><b>${ICON[r.type]} ${r.type}${r.status === 'posted' ? ' · ✓' : r.status === 'failed' ? ' · ❌' : ''}</b>${esc(r.title)}<div class="t">${esc(r.ny)} NY · ${esc(r.il)} IL</div></div>`).join('')}</div>`; }).join('')}</div>`;
 };
+
+V.addcreator = () => `<h1>Add a creator</h1><p class="sub">She shows up in the creator switch and in Schedule. Making her content (persona, reference images, reels) is set up with Hermes after this.</p>
+  <label class="mut">Name</label><input id="nc-n" class="field" placeholder="e.g. Mia"><div style="height:8px"></div>
+  <label class="mut">Instagram handle</label><input id="nc-h" class="field" placeholder="@handle"><div style="height:8px"></div>
+  <label class="mut">Metricool brand id (optional)</label><input id="nc-b" class="field" inputmode="numeric" placeholder="the number after blogId= in Metricool’s address">
+  <p class="mut" style="margin:6px 0 12px">Without it her schedule stays empty; add it later by adding her again.</p>
+  <button class="btn" onclick="A.addCreator()">＋ Add her</button>`;
+V.creatordone = () => { const c = CRS().find(x => x.id === S.cr) || CR(); return `<h1>${avatar(40)} ${esc(c.name)} added</h1>
+  <div class="list"><button class="item" onclick="A.pickAvatar('${esc(c.id)}')"><div class="ic">📷</div><div class="tx"><b>${c.avatar ? 'Change her photo' : 'Add her photo'}</b><span>JPG or PNG, square works best</span></div><div class="end">›</div></button></div>
+  <h2>Next: her project</h2><p class="sub">Hermes plans the folder, persona and the five reference images. Free until you say yes; images are paid.</p>
+  <button class="btn" onclick="A.run('ask',{extra:${esc(JSON.stringify(`Set up a new AI model for the AI OFM Creator app: name ${c.name}, Instagram ${c.handle || '(none yet)'}. Plan only, change nothing yet: her project folder next to the main creator's project, what the persona needs from me, and the reference-images skill plan with its cost (dry run). Ask me what you need.`))}})">🧭 Plan her project with Hermes</button>`; };
 
 /* ---------------------------------------------------------------- more */
 V.more = () => `<h1>More</h1><div class="list">${[['results', '📊', 'Results', 'Last 7 days · what to make next'], ['lessons', '🧠', 'Lessons', 'Your corrections → skill changes'],
@@ -440,6 +481,8 @@ V.appearance = () => `<h1>Appearance</h1><p class="sub">Saved to your Telegram a
 
 /* ---------------------------------------------------------------- sheets */
 const SHEETS = {
+  creators: () => `<h3>Creators</h3><div class="list">${CRS().map(c => `<button class="item" onclick="A.pickCreator('${esc(c.id)}')">${avatarOf(c, 34)}<div class="tx"><b>${esc(c.name)}${c.main ? ' · main' : ''}</b><span>${esc(c.handle || '')}${c.metricool ? ' · Metricool ✓' : ' · no Metricool brand'}</span></div><div class="end">${c.id === CR().id ? '✓' : ''}</div></button>`).join('')}
+    <button class="item" onclick="A.sheet(null);A.go('addcreator')"><div class="ic">＋</div><div class="tx"><b>Add a creator</b><span>Name, Instagram, Metricool brand, photo</span></div><div class="end">›</div></button></div>`,
   wm: () => `<h3>Open the app as</h3>${WMODES.map(([k, i, n, d]) => `<button class="item" onclick="A.wm('${k}')"><div class="ic">${i}</div><div class="tx" style="white-space:normal"><b>${n}</b><span style="white-space:normal">${d}</span></div><div class="end">${S.wm === k ? '✓' : ''}</div></button>`).join('')}`,
   reject: s => `<h3>Reject ${esc(s.arg)}?</h3><p class="mut">The take moves to Reels/Raw/Rejected (nothing is deleted). A new attempt needs a new dry run and your yes.</p>
     <textarea id="why" class="field" placeholder="Why? (Hermes logs your words)"></textarea><div style="height:10px"></div>
@@ -521,6 +564,52 @@ const A = window.A = {
     x.onerror = () => { S.upl = null; offline(); };
     x.send(f);
   },
+  pickCreator(id) {
+    S.cr = id; store.set('creator', id); S.sheet = null;
+    if (S.sched && S.sched.sm) { /* show the picked creator in Schedule too */ S.sched.sm[id] = true; }
+    render(); toast(`${CR().name}`, 'ok');
+  },
+  async addCreator() {
+    const v = id => (document.getElementById(id) || {}).value || '';
+    try {
+      const r = await api('creator_add', {name: v('nc-n'), handle: v('nc-h'), blog_id: v('nc-b')});
+      S.user.creators = r.creators; S.cr = r.creator.id; store.set('creator', S.cr); S.sched.sm[S.cr] = true; S.sched.data = null;
+      clearDrafts('addcreator:'); haptic('success'); toast(`✅ ${r.creator.name} added`, 'ok'); go('creatordone');
+    } catch (e) { e.offline ? offline() : toast('❌ ' + e.message, 'err'); }
+  },
+  pickAvatar(cid) {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/jpeg,image/png';
+    inp.onchange = () => { const f = inp.files[0]; if (!f) return;
+      if (f.size > 5 * 1024 * 1024) return toast('❌ The photo must be under 5 MB.', 'err');
+      putRaw(`avatar?creator=${encodeURIComponent(cid)}`, f).then(j => { S.user.creators = j.creators; haptic('success'); toast('✅ Photo saved', 'ok'); render(); })
+        .catch(e => e.offline ? offline() : toast('❌ ' + e.message, 'err')); };
+    inp.click();
+  },
+  async mic(id) {
+    if (S.rec) return stopRec();
+    if (!navigator.mediaDevices || !window.MediaRecorder) return toast('🎤 This Telegram can’t record inside apps. Send a voice note in the bot chat instead.', 'err', null, 6500);
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({audio: true}); }
+    catch (e) { return toast('🎤 No microphone access. Allow it for Telegram in the phone’s settings, or send a voice note in the chat.', 'err', null, 7000); }
+    const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus', ''].find(t => !t || MediaRecorder.isTypeSupported(t));
+    const mr = new MediaRecorder(stream, type ? {mimeType: type} : undefined), chunks = [];
+    mr.ondataavailable = e => e.data.size && chunks.push(e.data);
+    mr.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(chunks, {type: mr.mimeType || 'audio/webm'}); S.rec = null; S.stt = id; render();
+      if (blob.size < 2000) { S.stt = null; render(); return toast('🎤 Too short. Tap, speak, tap again.', 'err'); }
+      try {
+        const j = await putRaw('voice', blob);
+        const el = document.getElementById(id); S.stt = null;
+        if (!j.text) { render(); return toast('🎤 Didn’t catch any words. Try again a bit closer.', 'err'); }
+        const cur = (el ? el.value : DRAFTS[dkey(id)] || '').trim(), val = (cur ? cur + ' ' : '') + j.text;
+        DRAFTS[dkey(id)] = val; saveDrafts(); render(); haptic('success');
+        const n = document.getElementById(id); if (n) { n.value = val; n.focus(); }
+      } catch (e) { S.stt = null; render(); e.offline ? offline() : toast('❌ ' + e.message, 'err'); }
+    };
+    S.rec = {id, mr, t0: Date.now()}; mr.start(); haptic('light'); render();
+    S.rec.timer = setInterval(() => { const b = document.querySelector('.mic.rec'); if (b) b.textContent = '⏹ ' + Math.floor((Date.now() - S.rec.t0) / 1000) + 's'; if (Date.now() - S.rec.t0 > 300000) stopRec(); }, 500);
+  },
   async openBrowser() {
     try { const r = await api('browser_link'); tg.openLink(BASE + r.path); toast('🖥 Opening in your browser… maximize it once; the browser keeps the size.', 'ok'); }
     catch (e) { toast('❌ ' + e.message, 'err'); }
@@ -531,7 +620,8 @@ const A = window.A = {
 async function boot2() {
   try {
     const h = await api('hello');
-    S.user = h; S.avatar = h.avatar ? BASE + '/f/' + h.avatar : null; (h.creators || []).forEach(c => { if (!(c.id in S.sched.sm)) S.sched.sm[c.id] = true; }); S.asleep = false; S.err = null;
+    S.user = h; S.avatar = furl(h.avatar); S.cr = (await store.get('creator')) || S.cr;
+    if (!(h.creators || []).some(c => c.id === S.cr)) S.cr = ((h.creators || [])[0] || {}).id; (h.creators || []).forEach(c => { if (!(c.id in S.sched.sm)) S.sched.sm[c.id] = true; }); S.asleep = false; S.err = null;
     render(); load(S.view);
     S.jobs = (await api('jobs')).jobs; poll();
   } catch (e) {

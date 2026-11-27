@@ -146,3 +146,11 @@ video{width:100%;max-height:62vh;border-radius:14px;background:#000;display:bloc
 .hide{display:none!important}
 .hide-phone{display:none}
 @media (min-width:900px){.hide-phone{display:block}}
+
+/* voice + creator switch */
+.micw{position:relative}
+.micw>textarea{padding-right:58px}
+.mic{position:absolute;right:8px;bottom:8px;min-width:42px;height:38px;border-radius:19px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:17px;padding:0 10px;cursor:pointer}
+.mic.rec{background:#e5484d;border-color:#e5484d;color:#fff;font-size:13px;font-weight:700;animation:recp 1.2s infinite}
+@keyframes recp{50%{opacity:.75}}
+button.who{background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;display:flex;align-items:center;gap:10px}
