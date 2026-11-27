@@ -230,7 +230,7 @@ async function poll() {
       try {
         const n = await api('job', {id: j.id});
         const i = S.jobs.findIndex(x => x.id === j.id); if (i >= 0) S.jobs[i] = n;
-        if (n.status !== 'running') { finished = true; haptic(n.status === 'done' ? 'success' : 'error'); if (S.view !== 'job' || S.job !== n.id) toast((n.status === 'done' ? '✅ ' : '❌ ') + n.title, n.status === 'done' ? 'ok' : 'err'); }
+        if (n.status !== 'running') { finished = true; haptic(n.status === 'done' ? 'success' : 'error'); if (S.view !== 'job' || S.job !== n.id) toast((n.status === 'done' ? '✅ ' : '❌ ') + chatTitle(n), n.status === 'done' ? 'ok' : 'err'); }
       } catch (e) { if (e.offline) { goAsleep(); return; } }
     }
     // Reels only when its "Waiting for you" list changed (re-drawing it every 2.5 s would restart a playing video)
@@ -357,14 +357,16 @@ function threadInfo(th) {
 }
 const allThreads = () => [...new Set((S.jobs || []).map(x => x.thread))].map(threadInfo).sort((a, b) => b.last.started - a.last.started);
 const waitingThreads = () => allThreads().filter(x => x.waiting);
+// a chat's name: a Copy plan is named after the reel it makes (R09 seat), not just "Copy · plan"
+const chatTitle = root => { const lb = root.source && root.source.label; return lb ? `📥 Copy · ${lb}` : root.title; };
 const chatItem = (x, del = false) => { const c = CRS().find(k => k.id === x.creator);
   return `<div class="item chat ${x.status === 'failed' ? 'failed' : ''}"><button class="chatopen" onclick="A.openJob(${q(x.last.id)})"><div class="ic">${x.status === 'running' ? '<span class="spin"></span>' : x.status === 'waiting' ? '⏳' : x.status === 'done' ? '✅' : '❌'}</div>
-  <div class="tx"><b>${esc(x.root.title)}${x.jobs.length > 1 ? ` <span class="mut">· ${x.jobs.length}</span>` : ''}</b><span>${x.status === 'waiting' ? (x.cost != null ? `waiting for your yes · $${x.cost.toFixed(2)}` : 'waiting for your answer') : x.status === 'running' ? 'working… ' + ago(x.last.started) : x.status === 'failed' ? esc(x.last.error) : esc((x.last.answer || '').slice(0, 90))}</span></div>
+  <div class="tx"><b>${esc(chatTitle(x.root))}${x.jobs.length > 1 ? ` <span class="mut" style="white-space:nowrap">· ${x.jobs.length} steps</span>` : ''}</b><span>${x.status === 'waiting' ? (x.cost != null ? `waiting for your yes · $${x.cost.toFixed(2)}` : 'waiting for your answer') : x.status === 'running' ? 'working… ' + ago(x.last.started) : x.status === 'failed' ? esc(x.last.error) : esc((x.last.answer || '').slice(0, 90))}</span></div>
   <div class="end">${c && CRS().length > 1 ? avatarOf(c, 18) : ''}${ago(x.last.started)}</div></button>
   ${del && x.status !== 'running' ? `<button class="chatdel" aria-label="Remove this chat" onclick="A.sheet('delchats',{threads:[${q(x.thread)}],label:'one'})">🗑</button>` : ''}</div>`; };
 const refreshBtn = () => `<button class="btn small sec refresh" onclick="A.refresh()" aria-label="Refresh">${S.refreshing ? '<span class="spin"></span>' : '⟳'} Refresh</button>`;
 const jobItem = j => `<button class="item ${j.status === 'failed' ? 'failed' : ''}" onclick="A.openJob(${q(j.id)})"><div class="ic">${j.status === 'running' ? '<span class="spin"></span>' : j.status === 'done' ? '✅' : '❌'}</div>
-  <div class="tx"><b>${esc(j.title)}</b><span>${j.status === 'running' ? 'working… ' + ago(j.started) : j.status === 'failed' ? esc(j.error) : esc((j.answer || '').slice(0, 90))}</span></div><div class="end">${ago(j.started)}</div></button>`;
+  <div class="tx"><b>${esc(chatTitle(j))}</b><span>${j.status === 'running' ? 'working… ' + ago(j.started) : j.status === 'failed' ? esc(j.error) : esc((j.answer || '').slice(0, 90))}</span></div><div class="end">${ago(j.started)}</div></button>`;
 
 V.job = () => {
   const j = S.jobs.find(x => x.id === S.job);
@@ -372,7 +374,7 @@ V.job = () => {
   const ti = threadInfo(j.thread), thread = ti.jobs, last = ti.last;
   const cost = ti.cost;
   const src = (thread.find(x => x.source && (x.source.url || x.source.link)) || {}).source;
-  return `<h1>${esc(thread[0].title)}</h1><p class="sub">Hermes · ${thread.length} step${thread.length > 1 ? 's' : ''}</p>
+  return `<h1>${esc(chatTitle(thread[0]))}</h1><p class="sub">Hermes · ${thread.length} step${thread.length > 1 ? 's' : ''}</p>
   ${src ? `<div class="card"><div class="mut" style="font-size:12px;margin-bottom:6px">🎞 The original${src.url ? '' : ' (not downloaded yet)'}</div>
     ${src.url ? (src.kind === 'image' ? `<img src="${esc(BASE + src.url)}" style="width:100%;max-height:60vh;object-fit:contain;border-radius:10px">`
       : `<video controls playsinline preload="metadata" src="${esc(BASE + src.url)}" style="width:100%;max-height:60vh;border-radius:10px;background:#000"></video>`) : ''}
