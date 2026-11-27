@@ -371,7 +371,12 @@ V.job = () => {
   if (!j) return loading();
   const ti = threadInfo(j.thread), thread = ti.jobs, last = ti.last;
   const cost = ti.cost;
+  const src = (thread.find(x => x.source && (x.source.url || x.source.link)) || {}).source;
   return `<h1>${esc(thread[0].title)}</h1><p class="sub">Hermes · ${thread.length} step${thread.length > 1 ? 's' : ''}</p>
+  ${src ? `<div class="card"><div class="mut" style="font-size:12px;margin-bottom:6px">🎞 The original${src.url ? '' : ' (not downloaded yet)'}</div>
+    ${src.url ? (src.kind === 'image' ? `<img src="${esc(BASE + src.url)}" style="width:100%;max-height:60vh;object-fit:contain;border-radius:10px">`
+      : `<video controls playsinline preload="metadata" src="${esc(BASE + src.url)}" style="width:100%;max-height:60vh;border-radius:10px;background:#000"></video>`) : ''}
+    ${src.link ? `<button class="btn sec small" style="margin-top:8px" onclick="A.openLink(${q(src.link)})">↗ Open on Instagram</button>` : ''}</div>` : ''}
   ${thread.map(x => `<div class="card"><div class="mut" style="font-size:12px;margin-bottom:6px">${esc(x.title)} · ${clock(x.started)}</div>
     ${x.status === 'running' ? `<div class="mut"><span class="spin"></span> Working… ${ago(x.started)} — you can close the app, Telegram tells you when it’s done.</div>`
       : x.status === 'failed' ? `<div style="color:var(--err)"><b>❌ It failed</b><br>${esc(x.error)}</div>${x.answer ? `<div class="ans" style="margin-top:8px">${md(x.answer)}</div>` : ''}`
@@ -608,6 +613,7 @@ const A = window.A = {
   openReel(id) { S.reel = id; if (window.innerWidth >= 900) render(); else go('reel'); },
   reelFilter(c) { S.reelStage = c; if (S.view !== 'reels') go('reels'); else render(); },
   openScript(id) { S.script = id; go('script'); },
+  openLink(u) { if (!/^https:\/\/(www\.)?instagram\.com\//.test(u)) return; if (tg && tg.openLink) tg.openLink(u); else window.open(u, '_blank', 'noopener'); },
   fill(day, ny, il, fmt) { A.sheet('fill', {day, ny, il, fmt}); },
   trial(id) {
     const what = (document.querySelector('input[name="tt"]:checked') || {}).value;
