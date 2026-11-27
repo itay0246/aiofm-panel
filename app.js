@@ -75,8 +75,9 @@ async function api(path, body = {}, again = true) {
   if (!r.ok) { const err = new Error(j.error || ('HTTP ' + r.status)); err.status = r.status; throw err; }
   return j;
 }
+// undo = the function that undoes exactly this toast's action (it can't undo an older one once this toast is gone)
 function toast(text, kind = '', undo = null, ms = 3800) {
-  S.toastObj = {text, kind, undo};
+  S.toastObj = {text, kind, undo: typeof undo === 'function' ? undo : null};
   drawLayer();
   clearTimeout(toast.t); toast.t = setTimeout(() => { S.toastObj = null; drawLayer(); }, ms);
 }
@@ -186,31 +187,47 @@ async function goAsleep() {
 async function retry() { S.asleep = false; S.err = null; render(); await boot2(); }
 
 /* ---------------------------------------------------------------- jobs */
+// kinds that send what Itay typed: only these clear the drafts they used (a Yes / Cancel / Approve tap never wipes
+// a reply he started typing)
+const TEXT_KINDS = ['ask', 'reply', 'copy', 'overlay', 'photos', 'reject'];
+const inflight = new Set();
 async function run(kind, opts = {}) {
+  // a second tap while the first is still on its way does nothing (two taps on Yes must never become two paid runs)
+  const key = kind + ':' + (opts.thread || opts.id || opts.ref || '');
+  if (inflight.has(key)) return;
+  inflight.add(key);
   try {
     const from = dkey('').replace(/:$/, ''), fromView = S.view;
     const j = await api('run', {kind, ...(opts.thread ? {} : {creator: S.cr}), ...opts});
     if (S.toastObj && S.toastObj.kind === 'err') S.toastObj = null;
     if (S.asleep) { S.asleep = false; S.err = null; api('home').then(h => { S.home = h; saveSnap(); }).catch(() => {}); }
-    clearDrafts(fromView === 'script' ? '\u0000' : from);
+    if (TEXT_KINDS.includes(kind) && fromView !== 'script') clearDrafts(from);
     S.jobs = [j, ...S.jobs.filter(x => x.id !== j.id)];
     S.job = j.id; S.sheet = null; go('job'); poll();
   } catch (e) { e.offline ? offline() : toast('❌ ' + e.message, 'err', null, 6000); }
+  finally { inflight.delete(key); }
 }
-let pollT = null;
+// one polling loop at a time (poll() is called from several places; two loops would double every request and toast)
+let pollT = null, polling = false;
 async function poll() {
   clearTimeout(pollT);
+  if (polling) return;
   const running = S.jobs.filter(j => j.status === 'running');
   if (!running.length || S.asleep) return;
-  for (const j of running) {
-    try {
-      const n = await api('job', {id: j.id});
-      const i = S.jobs.findIndex(x => x.id === j.id); if (i >= 0) S.jobs[i] = n;
-      if (n.status !== 'running') { haptic(n.status === 'done' ? 'success' : 'error'); if (S.view !== 'job' || S.job !== n.id) toast((n.status === 'done' ? '✅ ' : '❌ ') + n.title, n.status === 'done' ? 'ok' : 'err'); }
-    } catch (e) { if (e.offline) return goAsleep(); }
-  }
-  if (['job', 'home', 'history'].includes(S.view)) render();
-  pollT = setTimeout(poll, 2500);
+  polling = true;
+  try {
+    let finished = false;
+    for (const j of running) {
+      try {
+        const n = await api('job', {id: j.id});
+        const i = S.jobs.findIndex(x => x.id === j.id); if (i >= 0) S.jobs[i] = n;
+        if (n.status !== 'running') { finished = true; haptic(n.status === 'done' ? 'success' : 'error'); if (S.view !== 'job' || S.job !== n.id) toast((n.status === 'done' ? '✅ ' : '❌ ') + n.title, n.status === 'done' ? 'ok' : 'err'); }
+      } catch (e) { if (e.offline) { goAsleep(); return; } }
+    }
+    // Reels only when its "Waiting for you" list changed (re-drawing it every 2.5 s would restart a playing video)
+    if (['job', 'home', 'history'].includes(S.view) || (finished && S.view === 'reels' && S.reelStage === 'waiting')) render();
+  } finally { polling = false; }
+  if (!S.asleep) pollT = setTimeout(poll, 2500);
 }
 
 /* ---------------------------------------------------------------- layout */
@@ -273,20 +290,22 @@ V.home = () => {
   const h = S.home;
   if (!h) return loading();
   const L = h.laptop || {}, b = h.balances || {}, items = (h.schedule && h.schedule.items) || [];
-  const todayNY = items.length ? items[0].day : null;
-  const days = [...new Set(items.map(i => i.day))].slice(0, 3);
+  // always today, tomorrow and the day after (New York dates), so an empty today is never labelled with tomorrow's posts
+  const t0 = nyToday(), days = [0, 1, 2].map(n => { const d = new Date(t0); d.setDate(t0.getDate() + n); return iso(d); });
   const miss = items.filter(i => i.status === 'missing');
-  const jobs = (h.jobs || S.jobs || []).slice(0, 5);
+  // S.jobs is kept up to date by poll(); h.jobs is only the list from when Home loaded
+  const jobs = ((S.jobs && S.jobs.length ? S.jobs : h.jobs) || []).slice(0, 5);
   const failed = jobs.filter(j => j.status === 'failed');
   const r = h.reels || {};
   const hour = new Date().getHours(), hi = hour < 5 ? 'Good night' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   return `<h1>${hi}</h1><p class="sub">${L.time_ny ? `${esc(L.time_ny)} New York · ${esc(L.time_il)} Israel` : ''}${L.power ? ` · ${L.power.charger ? '🔌 charger' : '🔋 battery'}${L.power.battery != null ? ' ' + L.power.battery + '%' : ''}` : ''}${L.disk_gb != null ? ` · ${L.disk_gb} GB free` : ''}${L.hermes === false ? ' · ⚠️ Hermes not answering' : ''}</p>
   <div class="pcgrid"><div>
   ${days.map((d, i) => { const di = items.filter(x => x.day === d); const dt = new Date(d + 'T12:00:00');
-    return `<h2>${i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : DAYN[(dt.getDay() + 6) % 7]} · ${DAYN[(dt.getDay() + 6) % 7]} ${dt.getDate()} ${MONN[dt.getMonth()]}<span class="sp"></span>${i === 0 ? `<button class="lnk" onclick="A.go('schedule')">Schedule ›</button>` : ''}</h2>
-    <div class="list">${di.map(postItem).join('') || '<div class="item mut">Nothing scheduled</div>'}</div>`; }).join('') || (h.schedule_error ? `<div class="card banner err">Metricool: ${esc(h.schedule_error)}</div>` : '')}
+    return `<h2>${i === 0 ? 'Today · ' : i === 1 ? 'Tomorrow · ' : ''}${DAYN[(dt.getDay() + 6) % 7]} ${dt.getDate()} ${MONN[dt.getMonth()]}<span class="sp"></span>${i === 0 ? `<button class="lnk" onclick="A.go('schedule')">Schedule ›</button>` : ''}</h2>
+    <div class="list">${di.map(postItem).join('') || `<div class="item mut">${h.schedule ? 'Nothing scheduled' : 'Schedule not loaded'}</div>`}</div>`; }).join('')}
+  ${h.schedule_error ? `<div class="card banner err">Metricool: ${esc(h.schedule_error)}</div>` : ''}
   </div><div>
-  <h2>Missing (next 2 days)</h2>${miss.length ? `<div class="card" style="background:var(--warnbg);color:var(--warn);border-color:transparent"><b>${miss.length} empty reel slot${miss.length > 1 ? 's' : ''}</b> on ${[...new Set(miss.map(m => { const d = new Date(m.day + 'T12:00:00'); return DAYN[(d.getDay() + 6) % 7] + ' ' + d.getDate(); }))].join(', ')}.<br>Tap one in the list to fill it.</div>` : '<div class="card mut">✓ Nothing missing for the next 2 days.</div>'}
+  <h2>Missing (today + 2 days)</h2>${miss.length ? `<div class="card" style="background:var(--warnbg);color:var(--warn);border-color:transparent"><b>${miss.length} empty reel slot${miss.length > 1 ? 's' : ''}</b> on ${[...new Set(miss.map(m => { const d = new Date(m.day + 'T12:00:00'); return DAYN[(d.getDay() + 6) % 7] + ' ' + d.getDate(); }))].join(', ')}.<br>Tap one in the list to fill it.</div>` : '<div class="card mut">✓ Nothing missing for the next 2 days.</div>'}
   ${waitingThreads().length ? `<button class="card" style="width:100%" onclick="A.reelFilter('waiting')">⏳ <b>${waitingThreads().length} plan${waitingThreads().length > 1 ? 's' : ''} waiting for your answer</b> <span class="mut">›</span></button>` : ''}
   ${r.review ? `<button class="card" style="width:100%" onclick="A.reelFilter('review')">🎬 <b>${r.review} take${r.review > 1 ? 's' : ''} waiting for your review</b> <span class="mut">›</span></button>` : ''}
   ${r.capcut ? `<button class="card" style="width:100%" onclick="A.reelFilter('capcut')">✂️ <b>${r.capcut} reel${r.capcut > 1 ? 's' : ''} ready for CapCut</b> <span class="mut">›</span></button>` : ''}
@@ -300,7 +319,7 @@ V.home = () => {
 };
 const postItem = i => {
   const tag = i.status === 'posted' ? '<span class="tag ok">posted</span>' : i.status === 'failed' ? '<span class="tag err">failed</span>' : '';
-  if (i.status === 'missing') return `<button class="item empty" onclick="A.fill('${esc(i.day)}','${esc(i.ny)}')"><div class="ic">＋</div><div class="tx"><b>${esc(i.title)}</b><span style="color:inherit">tap to fill it</span></div><div class="end" style="color:inherit"><b style="color:inherit">${esc(i.ny)}</b>${esc(i.il)} IL</div></button>`;
+  if (i.status === 'missing') return `<button class="item empty" onclick="A.fill('${esc(i.day)}','${esc(i.ny)}','${esc(i.il)}')"><div class="ic">＋</div><div class="tx"><b>${esc(i.title)}</b><span style="color:inherit">tap to fill it</span></div><div class="end" style="color:inherit"><b style="color:inherit">${esc(i.ny)}</b>${esc(i.il)} IL</div></button>`;
   return `<div class="item ${i.status === 'failed' ? 'failed' : ''}"><div class="ic">${ICON[i.type] || '•'}</div><div class="tx"><b>${esc(i.type)} ${tag}</b><span>${esc(i.title)}</span></div><div class="end"><b>${esc(i.ny)}</b>${esc(i.il)} IL</div></div>`;
 };
 // ---- chats (a chat = a thread of jobs: the first one plus replies, yes, cancel)
@@ -353,16 +372,19 @@ V.job = () => {
     ${ti.waiting ? `<button class="btn danger" onclick="A.cancelJob('${last.thread}')">✕ Cancel plan</button>` : ''}</div>`}`;
 };
 
+// the CapCut chip counts the same reels its list shows (approved + upscaled + capcut)
+const stageMatch = (r, c) => c === 'all' || r.stage === c || (c === 'capcut' && ['approved', 'upscaled'].includes(r.stage));
+const chipN = c => c === 'waiting' ? waitingThreads().length : S.reels.filter(r => stageMatch(r, c)).length;
 V.reels = () => {
   if (!S.reels) return loading();
   const chips = ['waiting', 'all', 'review', 'capcut', 'ready', 'scheduled', 'rejected'];
   const wait = waitingThreads();
-  if (S.reelStage === 'waiting') return `<div class="chips">${chips.map(c => `<button class="chip ${S.reelStage === c ? 'on' : ''}" onclick="A.reelFilter('${c}')">${c === 'waiting' ? '⏳ Waiting for you' : c === 'all' ? 'All' : STAGE[c][0]} ${c === 'waiting' ? wait.length : c === 'all' ? S.reels.length : S.reels.filter(r => r.stage === c).length}</button>`).join('')}</div>
+  if (S.reelStage === 'waiting') return `<div class="chips">${chips.map(c => `<button class="chip ${S.reelStage === c ? 'on' : ''}" onclick="A.reelFilter('${c}')">${c === 'waiting' ? '⏳ Waiting for you' : c === 'all' ? 'All' : STAGE[c][0]} ${chipN(c)}</button>`).join('')}</div>
     <p class="sub" style="margin:10px 0 6px">Plans Hermes made that wait for your answer (yes, a change, or cancel).</p>
     <div class="list">${wait.map(chatItem).join('') || '<div class="item mut">Nothing is waiting for you.</div>'}</div>`;
-  const list = S.reels.filter(r => S.reelStage === 'all' || r.stage === S.reelStage || (S.reelStage === 'capcut' && ['approved', 'upscaled'].includes(r.stage)));
+  const list = S.reels.filter(r => stageMatch(r, S.reelStage));
   const detail = S.reel ? reelDetail(S.reels.find(r => r.id === S.reel)) : '';
-  return `<div class="chips">${chips.map(c => `<button class="chip ${S.reelStage === c ? 'on' : ''}" onclick="A.reelFilter('${c}')">${c === 'waiting' ? '⏳ Waiting for you' : c === 'all' ? 'All' : STAGE[c][0]} ${c === 'waiting' ? wait.length : c === 'all' ? S.reels.length : S.reels.filter(r => r.stage === c).length}</button>`).join('')}</div>
+  return `<div class="chips">${chips.map(c => `<button class="chip ${S.reelStage === c ? 'on' : ''}" onclick="A.reelFilter('${c}')">${c === 'waiting' ? '⏳ Waiting for you' : c === 'all' ? 'All' : STAGE[c][0]} ${chipN(c)}</button>`).join('')}</div>
   <div class="pcgrid"><div class="list">${list.map(r => `<button class="item" onclick="A.openReel('${r.id}')"><div class="ic">🎬</div><div class="tx"><b>${esc(r.id)} · ${esc(r.slug)}</b><span>${esc(r.status)}</span></div><div class="end"><span class="tag ${STAGE[r.stage][1]}">${STAGE[r.stage][0]}</span></div></button>`).join('') || '<div class="item mut">None</div>'}</div>
   <div class="${detail ? '' : 'hide'}" id="pcdetail">${detail}</div></div>`;
 };
@@ -480,7 +502,7 @@ V.schedule = () => {
     return `<div class="day">${dn} ${d.getDate()} ${MONN[d.getMonth()]}<span>${iso(d) === today ? 'today' : ''}</span></div><div class="list">${dr.map(postItem).join('')}</div>`; }).join('') || (s.data ? '<div class="card mut">Nothing matches the filters.</div>' : '')}</div>
   <div class="week">${DAYN.map((dn, i) => { const d = dayIso(i), dr = rows.filter(r => r.day === iso(d));
     return `<div class="dayc ${iso(d) === today ? 'today' : ''}"><h4>${dn} ${d.getDate()}<span>${iso(d) === today ? 'today' : MONN[d.getMonth()]}</span></h4>
-    ${dr.map(r => r.status === 'missing' ? `<button class="post missing" onclick="A.fill('${r.day}','${esc(r.ny)}')"><b>＋ Empty reel slot</b><div class="t">${esc(r.ny)} NY · ${esc(r.il)} IL</div></button>`
+    ${dr.map(r => r.status === 'missing' ? `<button class="post missing" onclick="A.fill('${esc(r.day)}','${esc(r.ny)}','${esc(r.il)}')"><b>＋ Empty reel slot</b><div class="t">${esc(r.ny)} NY · ${esc(r.il)} IL</div></button>`
       : `<div class="post ${r.status}"><b>${ICON[r.type]} ${r.type}${r.status === 'posted' ? ' · ✓' : r.status === 'failed' ? ' · ❌' : ''}</b>${esc(r.title)}<div class="t">${esc(r.ny)} NY · ${esc(r.il)} IL</div></div>`).join('')}</div>`; }).join('')}</div>`;
 };
 
@@ -528,7 +550,7 @@ V.history = () => {
 };
 V.laptop = () => { const l = (S.laptop || {}).laptop || (S.home || {}).laptop; if (!l) return loading();
   return `<h1 class="hrow">Bot + laptop<span class="sp"></span>${refreshBtn()}</h1><div class="card"><dl class="kv"><dt>Laptop</dt><dd>${S.asleep ? '💤 asleep' : '● awake'}</dd><dt>Power</dt><dd>${l.power && l.power.charger ? '🔌 charger' : '🔋 battery'}${l.power && l.power.battery != null ? ' · ' + l.power.battery + '%' : ''}</dd>
-  <dt>Disk</dt><dd>${l.disk_gb} GB free</dd><dt>Hermes</dt><dd>${l.hermes ? '● answering' : '⚠️ not answering'}</dd><dt>App server</dt><dd>up ${ago(Date.now() / 1000 - l.app_uptime_s)}</dd>
+  <dt>Disk</dt><dd>${l.disk_gb != null ? l.disk_gb + ' GB free' : 'n/a'}</dd><dt>Hermes</dt><dd>${l.hermes ? '● answering' : '⚠️ not answering'}</dd><dt>App server</dt><dd>up ${ago(Date.now() / 1000 - l.app_uptime_s)}</dd>
   <dt>Time</dt><dd>${esc(l.time_ny)} NY · ${esc(l.time_il)} IL</dd><dt>Briefs</dt><dd>09:00 + 21:00 Israel</dd></dl></div>
   <p class="mut">Awake while the charger is in. On battery it sleeps; Telegram keeps your chat messages for 24 h.</p>`; };
 V.accounts = () => !S.accounts ? loading() : `<h1 class="hrow">Accounts<span class="sp"></span>${refreshBtn()}</h1><div class="list">${S.accounts.map(a => `<div class="item"><div class="ic">👤</div><div class="tx"><b>${esc(a.name || 'Account')}${String(a.id) === String(S.user && S.user.id) ? ' · you' : ''}</b><span>id ${esc(a.id)}${a.since ? ' · since ' + new Date(a.since * 1000).toLocaleDateString('en-GB') : ''}</span></div></div>`).join('')}</div>
@@ -550,14 +572,13 @@ const SHEETS = {
   delchats: s => `<h3 style="color:var(--err)">🗑 Remove ${s.arg.threads.length} chat${s.arg.threads.length === 1 ? '' : 's'}?</h3><p class="mut">${s.arg.label === 'one' ? 'This chat leaves' : s.arg.label === 'all' ? 'Every chat leaves' : 'The chats the filters show leave'} the app’s history (running ones stay). Nothing is erased on the laptop. You can undo it for 10 seconds.</p>
     <div style="display:grid;gap:8px"><button class="btn sec" onclick="A.sheet(null)">Keep ${s.arg.threads.length === 1 ? 'it' : 'them'}</button><button class="btn" style="background:var(--err)" onclick="A.removeChats(${esc(JSON.stringify(s.arg.threads))})">Remove</button></div>`,
   over10: s => `<h3>⚠️ This costs $${s.arg.cost.toFixed(2)}</h3><p class="mut">Above your $10 warning line. One yes = one paid attempt.</p>
-    <div style="display:grid;gap:8px"><button class="btn" onclick="A.yesGo('${s.arg.id}')">Yes, spend $${s.arg.cost.toFixed(2)}</button>
-    <button class="btn sec" onclick="A.yesGo('${s.arg.id}','Make only 1 take instead of the full batch (one paid attempt).')">Make 1 take</button><button class="btn danger" onclick="A.sheet(null)">Cancel</button></div>`,
-  fill: s => `<h3>Fill the ${esc(s.arg.day)} · ${esc(s.arg.ny)} NY slot</h3><p class="mut">Hermes picks a ready reel (or says what to make) and shows a metricool-scheduler dry run. Nothing is scheduled without your yes.</p>
-    <button class="btn" onclick="A.run('fill_slot',{extra:'${esc(s.arg.day)} ${esc(s.arg.ny)} New York reel'})">Ask Hermes</button>`,
+    <div style="display:grid;gap:8px"><button class="btn" onclick="A.yesGo('${s.arg.id}','',true)">Yes, spend $${s.arg.cost.toFixed(2)}</button>
+    <button class="btn sec" onclick="A.yesGo('${s.arg.id}','Make only 1 take instead of the full batch (one paid attempt).',true)">Make 1 take</button><button class="btn danger" onclick="A.sheet(null)">Cancel</button></div>`,
+  fill: s => `<h3>Fill the ${esc(s.arg.day)} · ${esc(s.arg.ny)} NY (${esc(s.arg.il)} Israel) slot</h3><p class="mut">Hermes picks a ready reel (or says what to make) and shows a metricool-scheduler dry run. Nothing is scheduled without your yes.</p>
+    <button class="btn" onclick="A.run('fill_slot',{extra:'${esc(s.arg.day)} ${esc(s.arg.ny)} New York (${esc(s.arg.il)} Israel) reel'})">Ask Hermes</button>`,
 };
 
 /* ---------------------------------------------------------------- actions */
-let lastDeleted = null;
 const A = window.A = {
   go, back, retry, run,
   sheet(name, arg) { S.sheet = name ? {name, arg} : null; drawLayer(); },
@@ -565,7 +586,7 @@ const A = window.A = {
   openReel(id) { S.reel = id; if (window.innerWidth >= 900) render(); else go('reel'); },
   reelFilter(c) { S.reelStage = c; if (S.view !== 'reels') go('reels'); else render(); },
   openScript(id) { S.script = id; go('script'); },
-  fill(day, ny) { A.sheet('fill', {day, ny}); },
+  fill(day, ny, il) { A.sheet('fill', {day, ny, il}); },
   count() { const n = words(document.getElementById('ed-h').value + ' ' + document.getElementById('ed-b').value);
     document.getElementById('ed-n').textContent = `reel-scripting keeps 30–42 spoken words · ${n} now ${n >= 30 && n <= 42 ? '✓' : '⚠️'}`; },
   async saveScript(id) {
@@ -577,35 +598,36 @@ const A = window.A = {
   rewrite(id) { run('rewrite', {ref: id, extra: document.getElementById('ed-h').value + ' ' + document.getElementById('ed-b').value}); },
   async delScript(id) {
     try { const r = await api('script_delete', {id}); if (!r.ok) throw new Error(r.error);
-      lastDeleted = id; S.scripts = S.scripts.filter(s => s.id !== id); S.sheet = null; S.view = 'scripts'; S.stack = ['create']; render();
-      toast(`🗑 ${id} deleted`, '', true, 10000);
+      S.scripts = S.scripts.filter(s => s.id !== id); S.sheet = null; S.view = 'scripts'; S.stack = ['create']; render();
+      toast(`🗑 ${id} deleted`, '', () => A.restoreScript(id), 10000);
     } catch (e) { e.offline ? offline() : toast('❌ Not deleted · ' + e.message, 'err'); }
   },
-  async undo() {
-    if (S.removed) { const r = S.removed; S.removed = null; S.toastObj = null;
-      try { await api('chats_restore', {threads: r.threads}); S.jobs = [...r.jobs, ...S.jobs].sort((a, b) => b.started - a.started); toast('↩ Chats back', 'ok'); render(); }
-      catch (e) { toast('❌ ' + e.message, 'err'); } return; }
-    if (!lastDeleted) return; const id = lastDeleted; lastDeleted = null;
+  undo() { const t = S.toastObj; if (!t || !t.undo) return; S.toastObj = null; drawLayer(); t.undo(); },
+  async restoreScript(id) {
     try { const r = await api('script_restore', {id}); if (!r.ok) throw new Error(r.error); S.scripts = (await api('scripts')).scripts; toast(`↩ ${id} restored`, 'ok'); render(); }
-    catch (e) { toast('❌ ' + e.message, 'err'); } },
+    catch (e) { e.offline ? offline() : toast('❌ Not restored · ' + e.message, 'err'); } },
+  async restoreChats(threads, jobs) {
+    try { await api('chats_restore', {threads}); S.jobs = [...jobs, ...S.jobs].sort((a, b) => b.started - a.started); toast('↩ Chats back', 'ok'); render(); }
+    catch (e) { e.offline ? offline() : toast('❌ Not restored · ' + e.message, 'err'); } },
   copy() { const l = document.getElementById('link').value.trim(); if (!/^https?:\/\/(www\.)?instagram\.com\//.test(l)) return toast('Paste an Instagram link first.', 'err');
     run('copy', {extra: l + (document.getElementById('note').value.trim() ? '\nNotes: ' + document.getElementById('note').value.trim() : '')}); },
   runText(kind, id, optional = false) { const t = document.getElementById(id).value.trim(); if (!t && !optional) return toast('Type something first.', 'err'); run(kind, {extra: t}); },
   reply(thread) { const t = document.getElementById('reply').value.trim(); if (!t) return toast('Type a reply first.', 'err'); run('reply', {extra: t, thread}); },
-  again(id) { const j = S.jobs.find(x => x.id === id); run(j.kind === 'yes' ? 'reply' : 'reply', {extra: 'Try that again. ' + (j.kind === 'yes' ? 'This is a paid step: show a new dry run and wait for my yes.' : ''), thread: j.thread}); },
+  again(id) { run('again', {id}); },  // the server resends the request; a failed paid step comes back as a new dry run, never as a second yes
   cancelJob(thread) { run('cancel', {thread}); },
   async refresh() { if (S.refreshing) return; S.refreshing = true; render();
     await load(S.view); S.refreshing = false; render(); if (!S.asleep && !S.err) toast('⟳ Updated ' + clock(Date.now() / 1000), 'ok', null, 1800); },
   async removeChats(threads) {
     if (!threads.length) return A.sheet(null);
     try { const r = await api('chats_remove', {threads}); if (!r.ok) throw new Error(r.error || 'not removed');
-      S.removed = {threads, jobs: S.jobs.filter(x => threads.includes(x.thread))}; S.jobs = S.jobs.filter(x => !threads.includes(x.thread));
+      const gone = S.jobs.filter(x => threads.includes(x.thread)); S.jobs = S.jobs.filter(x => !threads.includes(x.thread));
       S.sheet = null; if (S.view === 'job') { S.view = 'history'; S.stack = ['more']; } render();
-      toast(`🗑 ${threads.length} chat${threads.length === 1 ? '' : 's'} removed`, '', true, 10000);
+      toast(`🗑 ${threads.length} chat${threads.length === 1 ? '' : 's'} removed`, '', () => A.restoreChats(threads, gone), 10000);
     } catch (e) { e.offline ? offline() : toast('❌ Not removed · ' + e.message, 'err'); }
   },
   yes(id) { const j = S.jobs.find(x => x.id === id); if (j.cost_usd > 10) return A.sheet('over10', {id, cost: j.cost_usd}); A.yesGo(id); },
-  yesGo(id, extra = '') { const j = S.jobs.find(x => x.id === id); S.sheet = null; run('yes', {thread: j.thread, extra}); },
+  // over10_ok only from the ⚠️ card: the server refuses a yes above $10 without it
+  yesGo(id, extra = '', over10 = false) { const j = S.jobs.find(x => x.id === id); S.sheet = null; drawLayer(); run('yes', {thread: j.thread, extra, ...(over10 ? {over10_ok: true} : {})}); },
   reject(id) { const why = document.getElementById('why').value.trim(); if (!why) return toast('Say why (Hermes logs it).', 'err'); run('reject', {ref: id, extra: why}); },
   wk(n) { S.sched.wk = n === 0 ? 0 : S.sched.wk + n; S.dd = null; S.sched.data = null; loadWeek(); },
   sync() { loadWeek(true); },
@@ -711,7 +733,7 @@ async function boot2() {
     // Saved PC mode "Full screen windowed": open the browser straight away at launch (one-time sign-in link).
     // If Telegram ignores a link opened without a tap, the card at the top opens it with one tap.
     if (DESKTOP && !SAME_ORIGIN && S.wm === 'browser' && !boot2.opened) { boot2.opened = true; S.launchBrowser = true; render(); A.openBrowser(true); }
-    S.jobs = (await api('jobs')).jobs; poll();
+    S.jobs = (await api('jobs')).jobs; render(); poll();  // Home's job list + "waiting for you" need the jobs
   } catch (e) {
     if (e.offline || !BASE && !SAME_ORIGIN) goAsleep();
     else { S.err = e.message; render(); }
