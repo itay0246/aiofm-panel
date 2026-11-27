@@ -328,15 +328,15 @@ V.home = () => {
 };
 const postItem = i => {
   const tag = i.status === 'posted' ? '<span class="tag ok">posted</span>' : i.status === 'failed' ? '<span class="tag err">failed</span>' : '';
-  if (i.status === 'missing') return `<button class="item empty" onclick="A.fill(${q(i.day)},${q(i.ny)},${q(i.il)})"><div class="ic">＋</div><div class="tx"><b>${esc(i.title)}</b><span style="color:inherit">tap to fill it</span></div><div class="end" style="color:inherit"><b style="color:inherit">${esc(i.ny)}</b>${esc(i.il)} IL</div></button>`;
+  if (i.status === 'missing') return `<button class="item empty" onclick="A.fill(${q(i.day)},${q(i.ny)},${q(i.il)},${q(i.format || '')})"><div class="ic">＋</div><div class="tx"><b>${esc(i.title)}</b><span style="color:inherit">tap to fill it</span></div><div class="end" style="color:inherit"><b style="color:inherit">${esc(i.ny)}</b>${esc(i.il)} IL</div></button>`;
   return `<div class="item ${i.status === 'failed' ? 'failed' : ''}"><div class="ic">${ICON[i.type] || '•'}</div><div class="tx"><b>${esc(i.type)} ${tag}</b><span>${esc(i.title)}</span></div><div class="end"><b>${esc(i.ny)}</b>${esc(i.il)} IL</div></div>`;
 };
 // ---- chats (a chat = a thread of jobs: the first one plus replies, yes, cancel)
 const KGROUPS = [['ask', '💬 Ask Hermes', ['ask']], ['copy', '🔁 Copy', ['copy']], ['take', '🎬 Takes', ['take']], ['overlay', '🔤 Overlay', ['overlay']],
-  ['scripts', '✍️ Scripts', ['ideas', 'script_full', 'rewrite']], ['reels', '🎞 Reels', ['approve', 'reject', 'upscale', 'capcut']],
+  ['scripts', '✍️ Scripts', ['ideas', 'script_full', 'rewrite']], ['reels', '🎞 Reels', ['approve', 'reject', 'upscale', 'capcut', 'trial']],
   ['sched', '📅 Schedule', ['fill_slot']], ['other', '📊 Results + more', ['results', 'brief', 'photos']]];
 const HSTATS = [['waiting', 'Waiting for you'], ['running', 'Working'], ['done', 'Done'], ['failed', 'Failed']];
-const PLAN_KINDS = ['copy', 'take', 'overlay', 'upscale', 'fill_slot'];
+const PLAN_KINDS = ['copy', 'take', 'overlay', 'upscale', 'fill_slot', 'trial'];
 const MAX_PAID = 3;  // same as MAX_PAID_PER_REQUEST in app/server.py
 function threadInfo(th) {
   const jobs = (S.jobs || []).filter(x => x.thread === th).sort((a, b) => a.started - b.started);
@@ -390,7 +390,7 @@ const stageMatch = (r, c) => c === 'all' || r.stage === c || (c === 'capcut' && 
 const chipN = c => c === 'waiting' ? waitingThreads().length : S.reels.filter(r => stageMatch(r, c)).length;
 V.reels = () => {
   if (!S.reels) return loading();
-  const chips = ['waiting', 'all', 'review', 'capcut', 'ready', 'scheduled', 'rejected'];
+  const chips = ['waiting', 'all', 'review', 'capcut', 'ready', 'scheduled', 'posted', 'rejected'];
   const wait = waitingThreads();
   if (S.reelStage === 'waiting') return `<div class="chips">${chips.map(c => `<button class="chip ${S.reelStage === c ? 'on' : ''}" onclick="A.reelFilter('${c}')">${c === 'waiting' ? '⏳ Waiting for you' : c === 'all' ? 'All' : STAGE[c][0]} ${chipN(c)}</button>`).join('')}</div>
     <p class="sub" style="margin:10px 0 6px">Plans Hermes made that wait for your answer (yes, a change, or cancel).</p>
@@ -409,6 +409,7 @@ function reelDetail(r) {
     upscaled: `<button class="btn" ${dis()} onclick="A.run('capcut',{ref:${q(r.id)}})">✂️ CapCut steps</button>`,
     capcut: `<button class="btn" ${dis()} onclick="A.run('capcut',{ref:${q(r.id)}})">✂️ CapCut steps</button>`,
     ready: `<button class="btn" ${dis()} onclick="A.run('fill_slot',{extra:${q(`next free reel slot, using ${r.id}`)}})">📅 Schedule · dry run</button>`,
+    posted: `<button class="btn" ${dis()} onclick="A.sheet('trial',${q(r.id)})">🧪 Make a Trial Reel</button><p class="mut" style="margin:6px 0 0">A new version that tests one change, shown to non-followers first.</p>`,
   }[r.stage] || '';
   return `<div class="card">${r.video_url ? `<video controls playsinline preload="metadata" src="${esc(BASE + r.video_url)}"></video>` : '<div class="mut">No video file found.</div>'}
     <h2 style="margin-top:12px">${esc(r.id)} · ${esc(r.slug)} <span class="tag ${STAGE[r.stage][1]}">${STAGE[r.stage][0]}</span></h2>
@@ -515,7 +516,7 @@ V.schedule = () => {
     return `<div class="day">${dn} ${d.getDate()} ${MONN[d.getMonth()]}<span>${iso(d) === today ? 'today' : ''}</span></div><div class="list">${dr.map(postItem).join('')}</div>`; }).join('') || (s.data ? '<div class="card mut">Nothing matches the filters.</div>' : '')}</div>
   <div class="week">${DAYN.map((dn, i) => { const d = dayIso(i), dr = rows.filter(r => r.day === iso(d));
     return `<div class="dayc ${iso(d) === today ? 'today' : ''}"><h4>${dn} ${d.getDate()}<span>${iso(d) === today ? 'today' : MONN[d.getMonth()]}</span></h4>
-    ${dr.map(r => r.status === 'missing' ? `<button class="post missing" onclick="A.fill(${q(r.day)},${q(r.ny)},${q(r.il)})"><b>＋ Empty reel slot</b><div class="t">${esc(r.ny)} NY · ${esc(r.il)} IL</div></button>`
+    ${dr.map(r => r.status === 'missing' ? `<button class="post missing" onclick="A.fill(${q(r.day)},${q(r.ny)},${q(r.il)},${q(r.format || '')})"><b>＋ ${esc(r.title)}</b><div class="t">${esc(r.ny)} NY · ${esc(r.il)} IL</div></button>`
       : `<div class="post ${r.status}"><b>${ICON[r.type]} ${r.type}${r.status === 'posted' ? ' · ✓' : r.status === 'failed' ? ' · ❌' : ''}</b>${esc(r.title)}<div class="t">${esc(r.ny)} NY · ${esc(r.il)} IL</div></div>`).join('')}</div>`; }).join('')}</div>`;
 };
 
@@ -573,6 +574,10 @@ V.appearance = () => `<h1>Appearance</h1><p class="sub">Saved to your Telegram a
   ${DESKTOP ? `<h2>On the PC, open the app as</h2><div class="list">${WMODES.map(([k, i, n, d]) => `<button class="item" onclick="A.wm('${k}')"><div class="ic">${i}</div><div class="tx" style="white-space:normal"><b>${n}</b><span style="white-space:normal">${d}</span></div><div class="end" style="color:var(--accent);font-size:16px">${S.wm === k ? '✓' : ''}</div></button>`).join('')}</div>` : ''}`;
 
 /* ---------------------------------------------------------------- sheets */
+const TRIAL_TESTS = [['a new hook (first 1–2 seconds)', '🪝 New hook', 'Same reel, different opening line or first shot'],
+  ['a new ending', '🔚 New ending', 'Same reel, different last line or question'],
+  ['a new setting (place, outfit or light)', '🏠 New setting', 'Same words, different place, outfit or light'],
+  ['a new format (e.g. talking head ↔ overlay, or a trial format like Maybe)', '🔁 New format', 'Same idea in another format']];
 const SHEETS = {
   creators: () => `<h3>Creators</h3><div class="list">${CRS().map(c => `<button class="item" onclick="A.pickCreator(${q(c.id)})">${avatarOf(c, 34)}<div class="tx"><b>${esc(c.name)}${c.main ? ' · main' : ''}</b><span>${esc(c.handle || '')}${c.metricool ? ' · Metricool ✓' : ' · no Metricool brand'}</span></div><div class="end">${c.id === CR().id ? '✓' : ''}</div></button>`).join('')}
     <button class="item" onclick="A.sheet(null);A.go('addcreator')"><div class="ic">＋</div><div class="tx"><b>Add a creator</b><span>Name, Instagram, Metricool brand, photo</span></div><div class="end">›</div></button></div>`,
@@ -587,8 +592,12 @@ const SHEETS = {
   over10: s => `<h3>⚠️ This costs $${s.arg.cost.toFixed(2)}</h3><p class="mut">Above your $10 warning line. One yes = one paid attempt.</p>
     <div style="display:grid;gap:8px"><button class="btn" onclick="A.yesGo(${q(s.arg.id)},'',true)">Yes, spend $${s.arg.cost.toFixed(2)}</button>
     <button class="btn sec" onclick="A.yesGo(${q(s.arg.id)},'Make only 1 take instead of the full batch (one paid attempt).',true,true)">Make 1 take</button><button class="btn danger" onclick="A.sheet(null)">Cancel</button></div>`,
-  fill: s => `<h3>Fill the ${esc(s.arg.day)} · ${esc(s.arg.ny)} NY (${esc(s.arg.il)} Israel) slot</h3><p class="mut">Hermes picks a ready reel (or says what to make) and shows a metricool-scheduler dry run. Nothing is scheduled without your yes.</p>
-    <button class="btn" onclick="A.run('fill_slot',{extra:${q(`${s.arg.day} ${s.arg.ny} New York (${s.arg.il} Israel) reel`)}})">Ask Hermes</button>`,
+  fill: s => `<h3>Fill the ${esc(s.arg.day)} · ${esc(s.arg.ny)} NY (${esc(s.arg.il)} Israel) slot</h3>${s.arg.fmt ? `<p style="margin:0 0 6px"><b>${s.arg.fmt === 'overlay' ? '🔤 Overlay reel · text + song' : s.arg.fmt === 'normal' ? '🎙 Normal reel · talking head' : esc(s.arg.fmt)}</b> (our order: normal, normal, overlay)</p>` : ''}<p class="mut">Hermes picks a ready reel (or says what to make) and shows a metricool-scheduler dry run. Nothing is scheduled without your yes.</p>
+    <button class="btn" onclick="A.run('fill_slot',{extra:${q(`${s.arg.day} ${s.arg.ny} New York (${s.arg.il} Israel) ${s.arg.fmt ? s.arg.fmt + ' ' : ''}reel`)}})">Ask Hermes</button>`,
+  trial: s => `<h3>🧪 Trial Reel from ${esc(s.arg)}</h3><p class="mut">A new version of this posted reel, shown to non-followers first. Test <b>one</b> thing, so you know what made the difference.</p>
+    <div class="list">${TRIAL_TESTS.map(([v, n, d], i) => `<label class="item"><input type="radio" name="tt" value="${esc(v)}" ${i ? '' : 'checked'} style="margin-right:10px"><div class="tx" style="white-space:normal"><b>${n}</b><span style="white-space:normal">${d}</span></div></label>`).join('')}</div>
+    <div style="height:8px"></div><textarea id="tnote" class="field" style="min-height:60px" placeholder="Your idea for the change (optional)"></textarea><div style="height:10px"></div>
+    <div style="display:grid;gap:8px"><button class="btn" onclick="A.trial(${q(s.arg)})">Make the plan · dry run</button><button class="btn sec" onclick="A.sheet(null)">Not now</button></div>`,
 };
 
 /* ---------------------------------------------------------------- actions */
@@ -599,7 +608,13 @@ const A = window.A = {
   openReel(id) { S.reel = id; if (window.innerWidth >= 900) render(); else go('reel'); },
   reelFilter(c) { S.reelStage = c; if (S.view !== 'reels') go('reels'); else render(); },
   openScript(id) { S.script = id; go('script'); },
-  fill(day, ny, il) { A.sheet('fill', {day, ny, il}); },
+  fill(day, ny, il, fmt) { A.sheet('fill', {day, ny, il, fmt}); },
+  trial(id) {
+    const what = (document.querySelector('input[name="tt"]:checked') || {}).value;
+    if (!what) return toast('Pick the one thing to test.', 'err');
+    const note = document.getElementById('tnote').value.trim();
+    run('trial', {ref: id, extra: what + (note ? ` · notes: ${note}` : '')});
+  },
   count() { const n = words(document.getElementById('ed-h').value + ' ' + document.getElementById('ed-b').value);
     document.getElementById('ed-n').textContent = `reel-scripting keeps 30–42 spoken words · ${n} now ${n >= 30 && n <= 42 ? '✓' : '⚠️'}`; },
   async saveScript(id) {
