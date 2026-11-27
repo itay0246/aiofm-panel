@@ -239,11 +239,17 @@ function tabs() {
   const t = (v, ic, n, cls = '') => `<button class="tab ${cls} ${S.view === v || (v === 'more' && !TOP.includes(S.view) && !['reel', 'job', 'script', 'scripts', 'copy', 'take', 'overlay', 'photos', 'upscale', 'ask', 'capcut'].includes(S.view)) ? 'on' : ''}" onclick="A.go('${v}')"><i>${ic}</i>${n}</button>`;
   return `<nav class="tabs">${t('home', '🏠', 'Home')}${t('reels', '🎬', 'Reels')}${t('create', '＋', 'Create', 'create')}${t('schedule', '📅', 'Schedule')}${t('more', '☰', 'More')}</nav>`;
 }
+// Telegram's own top bar, background and bottom bar follow the app's theme (and match the BotFather splash colours)
+function tgColors() {
+  const bg = (THEMES.find(x => x[0] === S.theme) || THEMES[0])[2];
+  if (tgColors.last === bg || !tg.isVersionAtLeast) return; tgColors.last = bg;
+  try { if (tg.isVersionAtLeast('6.1')) { tg.setHeaderColor(bg); tg.setBackgroundColor(bg); } if (tg.isVersionAtLeast('7.10')) tg.setBottomBarColor(bg); } catch (e) {}
+}
 function render() {
   document.body.className = 't-' + S.theme;
   const v = (['home', 'reels', 'create', 'scripts', 'spending'].includes(S.view) ? notMain() : '') + (V[S.view] || V.home)();
   keepFocus(() => { $app.innerHTML = side() + `<div class="col">${bar()}<main class="main">${v}</main></div>` + tabs(); restoreDrafts($app); });
-  if (tg) { S.stack.length && !TOP.includes(S.view) ? tg.BackButton.show() : tg.BackButton.hide(); }
+  if (tg) { S.stack.length && !TOP.includes(S.view) ? tg.BackButton.show() : tg.BackButton.hide(); tgColors(); }
   drawLayer();
 }
 function drawLayer() {
