@@ -42,12 +42,29 @@ async function pickBase() {
   const saved = await store.get('api');
   return saved && /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(saved) ? saved : '';
 }
-async function api(path, body = {}) {
+// The laptop's address changes when it restarts. It publishes the current one in api.json of this site's repo;
+// an app opened from an old button looks it up there (read-only, public; the address alone gives no access).
+async function discover() {
+  const m = location.hostname.match(/^([a-z0-9-]+)\.github\.io$/i), repo = location.pathname.split('/').filter(Boolean)[0];
+  if (!m || !repo) return false;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${m[1]}/${repo}/contents/api.json?ref=main&t=${Date.now()}`,
+      {headers: {Accept: 'application/vnd.github.raw'}, cache: 'no-store'});
+    const j = await r.json();
+    if (j && /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(j.api) && j.api !== BASE) { BASE = j.api; store.set('api', BASE); return true; }
+  } catch (e) {}
+  return false;
+}
+async function api(path, body = {}, again = true) {
   let r;
   try {
     r = await fetch(BASE + '/api/' + path, {method: 'POST', headers: {'Content-Type': 'application/json'},
       credentials: SAME_ORIGIN ? 'same-origin' : 'omit', body: JSON.stringify({initData, ...body})});
-  } catch (e) { const err = new Error('The laptop is not reachable (asleep or offline).'); err.offline = true; throw err; }
+  } catch (e) {
+    if (again && !SAME_ORIGIN && await discover()) return api(path, body, false);
+    const err = new Error('The laptop is not reachable (asleep or offline).'); err.offline = true; throw err;
+  }
+  if ((r.status === 530 || r.status === 502 || r.status === 404) && again && !SAME_ORIGIN && await discover()) return api(path, body, false);
   let j = {};
   try { j = await r.json(); } catch (e) { if (r.status === 530 || r.status === 502 || r.status === 1033) { const err = new Error('The laptop is not reachable.'); err.offline = true; throw err; } }
   if (!r.ok) { const err = new Error(j.error || ('HTTP ' + r.status)); err.status = r.status; throw err; }
@@ -526,6 +543,7 @@ async function boot() {
   }
   if (!tg && !SAME_ORIGIN) { $app.innerHTML = '<div class="boot">Open this app from the AI OFM Creator bot in Telegram.</div>'; return; }
   BASE = await pickBase();
+  if (!BASE && !SAME_ORIGIN) await discover();
   render();
   await boot2();
   document.addEventListener('visibilitychange', () => { if (!document.hidden && !S.asleep) { load(S.view); poll(); } });
