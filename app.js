@@ -48,12 +48,18 @@ async function pickBase() {
 }
 // The laptop's address changes when it restarts. It publishes the current one in api.json of this site's repo;
 // an app opened from an old button looks it up there (read-only, public; the address alone gives no access).
+// GitHub allows 60 lookups an hour without a sign-in, so at most one every 30 s (retries while the laptop sleeps
+// would use the hour up, and then the new address couldn't be found after it wakes).
+const DISCOVER_GAP = 30000;
 async function discover() {
   const m = location.hostname.match(/^([a-z0-9-]+)\.github\.io$/i), repo = location.pathname.split('/').filter(Boolean)[0];
   if (!m || !repo) return false;
+  if (Date.now() - (discover.last || 0) < DISCOVER_GAP) return false;
+  discover.last = Date.now();
   try {
     const r = await fetch(`https://api.github.com/repos/${m[1]}/${repo}/contents/api.json?ref=main&t=${Date.now()}`,
       {headers: {Accept: 'application/vnd.github.raw'}, cache: 'no-store', signal: TO(8000)});
+    if (!r.ok) return false;  // 403/429 = rate limit: try again after the gap
     const j = await r.json();
     if (j && /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(j.api) && j.api !== BASE) { BASE = j.api; store.set('api', BASE); return true; }
   } catch (e) {}
@@ -328,6 +334,7 @@ const KGROUPS = [['ask', '💬 Ask Hermes', ['ask']], ['copy', '🔁 Copy', ['co
   ['sched', '📅 Schedule', ['fill_slot']], ['other', '📊 Results + more', ['results', 'brief', 'photos']]];
 const HSTATS = [['waiting', 'Waiting for you'], ['running', 'Working'], ['done', 'Done'], ['failed', 'Failed']];
 const PLAN_KINDS = ['copy', 'take', 'overlay', 'upscale', 'fill_slot'];
+const MAX_PAID = 3;  // same as MAX_PAID_PER_REQUEST in app/server.py
 function threadInfo(th) {
   const jobs = (S.jobs || []).filter(x => x.thread === th).sort((a, b) => a.started - b.started);
   const root = jobs[0], last = jobs[jobs.length - 1];
@@ -340,7 +347,9 @@ function threadInfo(th) {
   const waiting = !running && last.status === 'done' && !['yes', 'cancel'].includes(last.kind) && (cost != null || (PLAN_KINDS.includes(root.kind) && !closed));
   const group = (KGROUPS.find(g => g[2].includes(root.kind)) || ['other'])[0];
   const creator = root.creator || (CRS().find(c => c.main) || CR()).id;
-  return {thread: th, jobs, root, last, cost: running ? null : cost, costJob, waiting, group, creator,
+  // generations already approved here (the server allows 3 per request; each yes counts the takes it allowed)
+  const paid = jobs.filter(x => x.kind === 'yes').reduce((n, x) => n + Math.max(1, x.takes || 1), 0);
+  return {thread: th, jobs, root, last, cost: running ? null : cost, costJob, waiting, group, creator, paid, maxed: paid >= MAX_PAID,
     status: running ? 'running' : waiting ? 'waiting' : last.status === 'failed' ? 'failed' : 'done'};
 }
 const allThreads = () => [...new Set((S.jobs || []).map(x => x.thread))].map(threadInfo).sort((a, b) => b.last.started - a.last.started);
@@ -365,7 +374,8 @@ V.job = () => {
       : x.status === 'failed' ? `<div style="color:var(--err)"><b>❌ It failed</b><br>${esc(x.error)}</div>${x.answer ? `<div class="ans" style="margin-top:8px">${md(x.answer)}</div>` : ''}`
       : `<div class="ans">${md(x.answer)}</div>`}</div>`).join('')}
   ${last.status === 'running' ? '' : `
-    ${cost != null ? `<button class="btn" ${dis()} onclick="A.yes('${ti.costJob.id}')">✅ Yes, spend $${cost.toFixed(2)}</button><div style="height:8px"></div>` : ''}
+    ${cost != null && ti.maxed ? `<div class="card mut">💰 ${MAX_PAID} paid generations used in this request (the most for one). Start a new request for more, or cancel this plan.</div>`
+      : cost != null ? `<button class="btn" ${dis()} onclick="A.yes('${ti.costJob.id}')">✅ Yes, spend $${cost.toFixed(2)}</button><div style="height:8px"></div>` : ''}
     ${last.status === 'failed' ? `<button class="btn" ${dis()} onclick="A.again('${last.id}')">↻ Try again</button><div style="height:8px"></div>` : ''}
     <textarea id="reply" class="field" placeholder="${cost != null ? 'Change something, or ask…' : 'Reply to Hermes…'}"></textarea>
     <div class="row" style="margin-top:8px"><button class="btn sec" ${dis()} onclick="A.reply('${last.thread}')">Send</button>
@@ -573,7 +583,7 @@ const SHEETS = {
     <div style="display:grid;gap:8px"><button class="btn sec" onclick="A.sheet(null)">Keep ${s.arg.threads.length === 1 ? 'it' : 'them'}</button><button class="btn" style="background:var(--err)" onclick="A.removeChats(${esc(JSON.stringify(s.arg.threads))})">Remove</button></div>`,
   over10: s => `<h3>⚠️ This costs $${s.arg.cost.toFixed(2)}</h3><p class="mut">Above your $10 warning line. One yes = one paid attempt.</p>
     <div style="display:grid;gap:8px"><button class="btn" onclick="A.yesGo('${s.arg.id}','',true)">Yes, spend $${s.arg.cost.toFixed(2)}</button>
-    <button class="btn sec" onclick="A.yesGo('${s.arg.id}','Make only 1 take instead of the full batch (one paid attempt).',true)">Make 1 take</button><button class="btn danger" onclick="A.sheet(null)">Cancel</button></div>`,
+    <button class="btn sec" onclick="A.yesGo('${s.arg.id}','Make only 1 take instead of the full batch (one paid attempt).',true,true)">Make 1 take</button><button class="btn danger" onclick="A.sheet(null)">Cancel</button></div>`,
   fill: s => `<h3>Fill the ${esc(s.arg.day)} · ${esc(s.arg.ny)} NY (${esc(s.arg.il)} Israel) slot</h3><p class="mut">Hermes picks a ready reel (or says what to make) and shows a metricool-scheduler dry run. Nothing is scheduled without your yes.</p>
     <button class="btn" onclick="A.run('fill_slot',{extra:'${esc(s.arg.day)} ${esc(s.arg.ny)} New York (${esc(s.arg.il)} Israel) reel'})">Ask Hermes</button>`,
 };
@@ -627,7 +637,8 @@ const A = window.A = {
   },
   yes(id) { const j = S.jobs.find(x => x.id === id); if (j.cost_usd > 10) return A.sheet('over10', {id, cost: j.cost_usd}); A.yesGo(id); },
   // over10_ok only from the ⚠️ card: the server refuses a yes above $10 without it
-  yesGo(id, extra = '', over10 = false) { const j = S.jobs.find(x => x.id === id); S.sheet = null; drawLayer(); run('yes', {thread: j.thread, extra, ...(over10 ? {over10_ok: true} : {})}); },
+  // one_take: "Make 1 take" counts as one generation toward the 3 per request
+  yesGo(id, extra = '', over10 = false, oneTake = false) { const j = S.jobs.find(x => x.id === id); S.sheet = null; drawLayer(); run('yes', {thread: j.thread, extra, ...(over10 ? {over10_ok: true} : {}), ...(oneTake ? {one_take: true} : {})}); },
   reject(id) { const why = document.getElementById('why').value.trim(); if (!why) return toast('Say why (Hermes logs it).', 'err'); run('reject', {ref: id, extra: why}); },
   wk(n) { S.sched.wk = n === 0 ? 0 : S.sched.wk + n; S.dd = null; S.sched.data = null; loadWeek(); },
   sync() { loadWeek(true); },
