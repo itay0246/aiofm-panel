@@ -26,6 +26,9 @@ const S = {view: 'home', stack: [], theme: 'creator', wm: 'full', user: null, av
 
 /* ---------------------------------------------------------------- helpers */
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+// a value inside an inline onclick: JSON string + HTML escaping. esc() alone isn't enough there: the browser
+// turns &#39; back into ' before the handler runs, so a ' in an id would end the string.
+const q = v => esc(JSON.stringify(v == null ? '' : String(v)));
 const md = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`\n]+)`/g, '<code>$1</code>');
 const ago = t => { const m = Math.max(0, Math.round((Date.now() / 1000 - t) / 60)); return m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h ${m % 60} m` : `${Math.floor(m / 1440)} d`; };
 const clock = t => new Date(t * 1000).toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'});
@@ -325,7 +328,7 @@ V.home = () => {
 };
 const postItem = i => {
   const tag = i.status === 'posted' ? '<span class="tag ok">posted</span>' : i.status === 'failed' ? '<span class="tag err">failed</span>' : '';
-  if (i.status === 'missing') return `<button class="item empty" onclick="A.fill('${esc(i.day)}','${esc(i.ny)}','${esc(i.il)}')"><div class="ic">＋</div><div class="tx"><b>${esc(i.title)}</b><span style="color:inherit">tap to fill it</span></div><div class="end" style="color:inherit"><b style="color:inherit">${esc(i.ny)}</b>${esc(i.il)} IL</div></button>`;
+  if (i.status === 'missing') return `<button class="item empty" onclick="A.fill(${q(i.day)},${q(i.ny)},${q(i.il)})"><div class="ic">＋</div><div class="tx"><b>${esc(i.title)}</b><span style="color:inherit">tap to fill it</span></div><div class="end" style="color:inherit"><b style="color:inherit">${esc(i.ny)}</b>${esc(i.il)} IL</div></button>`;
   return `<div class="item ${i.status === 'failed' ? 'failed' : ''}"><div class="ic">${ICON[i.type] || '•'}</div><div class="tx"><b>${esc(i.type)} ${tag}</b><span>${esc(i.title)}</span></div><div class="end"><b>${esc(i.ny)}</b>${esc(i.il)} IL</div></div>`;
 };
 // ---- chats (a chat = a thread of jobs: the first one plus replies, yes, cancel)
@@ -355,12 +358,12 @@ function threadInfo(th) {
 const allThreads = () => [...new Set((S.jobs || []).map(x => x.thread))].map(threadInfo).sort((a, b) => b.last.started - a.last.started);
 const waitingThreads = () => allThreads().filter(x => x.waiting);
 const chatItem = (x, del = false) => { const c = CRS().find(k => k.id === x.creator);
-  return `<div class="item chat ${x.status === 'failed' ? 'failed' : ''}"><button class="chatopen" onclick="A.openJob('${x.last.id}')"><div class="ic">${x.status === 'running' ? '<span class="spin"></span>' : x.status === 'waiting' ? '⏳' : x.status === 'done' ? '✅' : '❌'}</div>
+  return `<div class="item chat ${x.status === 'failed' ? 'failed' : ''}"><button class="chatopen" onclick="A.openJob(${q(x.last.id)})"><div class="ic">${x.status === 'running' ? '<span class="spin"></span>' : x.status === 'waiting' ? '⏳' : x.status === 'done' ? '✅' : '❌'}</div>
   <div class="tx"><b>${esc(x.root.title)}${x.jobs.length > 1 ? ` <span class="mut">· ${x.jobs.length}</span>` : ''}</b><span>${x.status === 'waiting' ? (x.cost != null ? `waiting for your yes · $${x.cost.toFixed(2)}` : 'waiting for your answer') : x.status === 'running' ? 'working… ' + ago(x.last.started) : x.status === 'failed' ? esc(x.last.error) : esc((x.last.answer || '').slice(0, 90))}</span></div>
   <div class="end">${c && CRS().length > 1 ? avatarOf(c, 18) : ''}${ago(x.last.started)}</div></button>
-  ${del && x.status !== 'running' ? `<button class="chatdel" aria-label="Remove this chat" onclick="A.sheet('delchats',{threads:['${x.thread}'],label:'one'})">🗑</button>` : ''}</div>`; };
+  ${del && x.status !== 'running' ? `<button class="chatdel" aria-label="Remove this chat" onclick="A.sheet('delchats',{threads:[${q(x.thread)}],label:'one'})">🗑</button>` : ''}</div>`; };
 const refreshBtn = () => `<button class="btn small sec refresh" onclick="A.refresh()" aria-label="Refresh">${S.refreshing ? '<span class="spin"></span>' : '⟳'} Refresh</button>`;
-const jobItem = j => `<button class="item ${j.status === 'failed' ? 'failed' : ''}" onclick="A.openJob('${j.id}')"><div class="ic">${j.status === 'running' ? '<span class="spin"></span>' : j.status === 'done' ? '✅' : '❌'}</div>
+const jobItem = j => `<button class="item ${j.status === 'failed' ? 'failed' : ''}" onclick="A.openJob(${q(j.id)})"><div class="ic">${j.status === 'running' ? '<span class="spin"></span>' : j.status === 'done' ? '✅' : '❌'}</div>
   <div class="tx"><b>${esc(j.title)}</b><span>${j.status === 'running' ? 'working… ' + ago(j.started) : j.status === 'failed' ? esc(j.error) : esc((j.answer || '').slice(0, 90))}</span></div><div class="end">${ago(j.started)}</div></button>`;
 
 V.job = () => {
@@ -375,11 +378,11 @@ V.job = () => {
       : `<div class="ans">${md(x.answer)}</div>`}</div>`).join('')}
   ${last.status === 'running' ? '' : `
     ${cost != null && ti.maxed ? `<div class="card mut">💰 ${MAX_PAID} paid generations used in this request (the most for one). Start a new request for more, or cancel this plan.</div>`
-      : cost != null ? `<button class="btn" ${dis()} onclick="A.yes('${ti.costJob.id}')">✅ Yes, spend $${cost.toFixed(2)}</button><div style="height:8px"></div>` : ''}
-    ${last.status === 'failed' ? `<button class="btn" ${dis()} onclick="A.again('${last.id}')">↻ Try again</button><div style="height:8px"></div>` : ''}
+      : cost != null ? `<button class="btn" ${dis()} onclick="A.yes(${q(ti.costJob.id)})">✅ Yes, spend $${cost.toFixed(2)}</button><div style="height:8px"></div>` : ''}
+    ${last.status === 'failed' ? `<button class="btn" ${dis()} onclick="A.again(${q(last.id)})">↻ Try again</button><div style="height:8px"></div>` : ''}
     <textarea id="reply" class="field" placeholder="${cost != null ? 'Change something, or ask…' : 'Reply to Hermes…'}"></textarea>
-    <div class="row" style="margin-top:8px"><button class="btn sec" ${dis()} onclick="A.reply('${last.thread}')">Send</button>
-    ${ti.waiting ? `<button class="btn danger" onclick="A.cancelJob('${last.thread}')">✕ Cancel plan</button>` : ''}</div>`}`;
+    <div class="row" style="margin-top:8px"><button class="btn sec" ${dis()} onclick="A.reply(${q(last.thread)})">Send</button>
+    ${ti.waiting ? `<button class="btn danger" onclick="A.cancelJob(${q(last.thread)})">✕ Cancel plan</button>` : ''}</div>`}`;
 };
 
 // the CapCut chip counts the same reels its list shows (approved + upscaled + capcut)
@@ -395,17 +398,17 @@ V.reels = () => {
   const list = S.reels.filter(r => stageMatch(r, S.reelStage));
   const detail = S.reel ? reelDetail(S.reels.find(r => r.id === S.reel)) : '';
   return `<div class="chips">${chips.map(c => `<button class="chip ${S.reelStage === c ? 'on' : ''}" onclick="A.reelFilter('${c}')">${c === 'waiting' ? '⏳ Waiting for you' : c === 'all' ? 'All' : STAGE[c][0]} ${chipN(c)}</button>`).join('')}</div>
-  <div class="pcgrid"><div class="list">${list.map(r => `<button class="item" onclick="A.openReel('${r.id}')"><div class="ic">🎬</div><div class="tx"><b>${esc(r.id)} · ${esc(r.slug)}</b><span>${esc(r.status)}</span></div><div class="end"><span class="tag ${STAGE[r.stage][1]}">${STAGE[r.stage][0]}</span></div></button>`).join('') || '<div class="item mut">None</div>'}</div>
+  <div class="pcgrid"><div class="list">${list.map(r => `<button class="item" onclick="A.openReel(${q(r.id)})"><div class="ic">🎬</div><div class="tx"><b>${esc(r.id)} · ${esc(r.slug)}</b><span>${esc(r.status)}</span></div><div class="end"><span class="tag ${STAGE[r.stage][1]}">${STAGE[r.stage][0]}</span></div></button>`).join('') || '<div class="item mut">None</div>'}</div>
   <div class="${detail ? '' : 'hide'}" id="pcdetail">${detail}</div></div>`;
 };
 function reelDetail(r) {
   if (!r) return '';
   const acts = {
-    review: `<div class="row"><button class="btn" ${dis()} onclick="A.run('approve',{ref:'${r.id}'})">✅ Approve</button><button class="btn danger" ${dis()} onclick="A.sheet('reject','${r.id}')">✕ Reject</button></div>`,
-    approved: `<button class="btn" ${dis()} onclick="A.run('upscale',{extra:'Only ${r.id}.'})">⬆️ Upscale · dry run</button>`,
-    upscaled: `<button class="btn" ${dis()} onclick="A.run('capcut',{ref:'${r.id}'})">✂️ CapCut steps</button>`,
-    capcut: `<button class="btn" ${dis()} onclick="A.run('capcut',{ref:'${r.id}'})">✂️ CapCut steps</button>`,
-    ready: `<button class="btn" ${dis()} onclick="A.run('fill_slot',{extra:'next free reel slot, using ${r.id}'})">📅 Schedule · dry run</button>`,
+    review: `<div class="row"><button class="btn" ${dis()} onclick="A.run('approve',{ref:${q(r.id)}})">✅ Approve</button><button class="btn danger" ${dis()} onclick="A.sheet('reject',${q(r.id)})">✕ Reject</button></div>`,
+    approved: `<button class="btn" ${dis()} onclick="A.run('upscale',{extra:${q(`Only ${r.id}.`)}})">⬆️ Upscale · dry run</button>`,
+    upscaled: `<button class="btn" ${dis()} onclick="A.run('capcut',{ref:${q(r.id)}})">✂️ CapCut steps</button>`,
+    capcut: `<button class="btn" ${dis()} onclick="A.run('capcut',{ref:${q(r.id)}})">✂️ CapCut steps</button>`,
+    ready: `<button class="btn" ${dis()} onclick="A.run('fill_slot',{extra:${q(`next free reel slot, using ${r.id}`)}})">📅 Schedule · dry run</button>`,
   }[r.stage] || '';
   return `<div class="card">${r.video_url ? `<video controls playsinline preload="metadata" src="${esc(BASE + r.video_url)}"></video>` : '<div class="mut">No video file found.</div>'}
     <h2 style="margin-top:12px">${esc(r.id)} · ${esc(r.slug)} <span class="tag ${STAGE[r.stage][1]}">${STAGE[r.stage][0]}</span></h2>
@@ -427,7 +430,7 @@ V.copy = () => `<h1>Copy a reel or post</h1><p class="sub">Download without logi
   <button class="btn" ${dis()} onclick="A.copy()">Make the plan</button>`;
 V.scripts = () => !S.scripts ? loading() : `<h1>Scripts</h1><p class="sub">reel-scripting bank · 30–42 spoken words</p>
   <button class="btn" ${dis()} onclick="A.run('ideas')">✨ 3 new ideas for tomorrow</button><div style="height:12px"></div>
-  <div class="list">${S.scripts.map(s => `<button class="item" onclick="A.openScript('${esc(s.id)}')"><div class="ic">📝</div><div class="tx"><b>${esc(s.id)} · ${esc(s.hook)}</b><span>${s.words} words · ${esc(s.approval)}${s.production ? ' · ' + esc(s.production) : ''}</span></div><div class="end">›</div></button>`).join('') || '<div class="item mut">No scripts</div>'}</div>`;
+  <div class="list">${S.scripts.map(s => `<button class="item" onclick="A.openScript(${q(s.id)})"><div class="ic">📝</div><div class="tx"><b>${esc(s.id)} · ${esc(s.hook)}</b><span>${s.words} words · ${esc(s.approval)}${s.production ? ' · ' + esc(s.production) : ''}</span></div><div class="end">›</div></button>`).join('') || '<div class="item mut">No scripts</div>'}</div>`;
 V.script = () => {
   const s = (S.scripts || []).find(x => x.id === S.script);
   if (!s) return loading();
@@ -436,11 +439,11 @@ V.script = () => {
   <label class="mut">Hook</label><textarea id="ed-h" class="field" style="min-height:60px" oninput="A.count()">${esc(s.hook)}</textarea><div style="height:8px"></div>
   <label class="mut">Body</label><textarea id="ed-b" class="field" style="min-height:140px" oninput="A.count()">${esc(s.body)}</textarea>
   <p id="ed-n" class="mut">reel-scripting keeps 30–42 spoken words · ${n} now ${n >= 30 && n <= 42 ? '✓' : '⚠️'}</p>
-  <div class="row"><button class="btn" ${dis()} onclick="A.saveScript('${esc(s.id)}')">Save</button><button class="btn sec" ${dis()} onclick="A.rewrite('${esc(s.id)}')">✨ Ask Hermes to rewrite</button></div><div style="height:8px"></div>
-  <div class="row"><button class="btn sec" ${dis()} onclick="A.run('take',{ref:'${esc(s.id)}'})">🎬 Make a take · dry run</button><button class="btn danger" ${dis()} onclick="A.sheet('delscript','${esc(s.id)}')">🗑 Delete</button></div>`;
+  <div class="row"><button class="btn" ${dis()} onclick="A.saveScript(${q(s.id)})">Save</button><button class="btn sec" ${dis()} onclick="A.rewrite(${q(s.id)})">✨ Ask Hermes to rewrite</button></div><div style="height:8px"></div>
+  <div class="row"><button class="btn sec" ${dis()} onclick="A.run('take',{ref:${q(s.id)}})">🎬 Make a take · dry run</button><button class="btn danger" ${dis()} onclick="A.sheet('delscript',${q(s.id)})">🗑 Delete</button></div>`;
 };
 V.take = () => !S.scripts ? loading() : `<h1>Talking-head take</h1><p class="sub">Pick a script. Hermes does a dry run (scene, DELIVERY line, cost) and waits for your yes.</p>
-  <div class="list">${S.scripts.map(s => `<button class="item" ${dis()} onclick="A.run('take',{ref:'${esc(s.id)}'})"><div class="ic">🎬</div><div class="tx"><b>${esc(s.id)} · ${esc(s.hook)}</b><span>${s.words} words · ${esc(s.production || s.approval)}</span></div><div class="end">Dry run ›</div></button>`).join('')}</div>`;
+  <div class="list">${S.scripts.map(s => `<button class="item" ${dis()} onclick="A.run('take',{ref:${q(s.id)}})"><div class="ic">🎬</div><div class="tx"><b>${esc(s.id)} · ${esc(s.hook)}</b><span>${s.words} words · ${esc(s.production || s.approval)}</span></div><div class="end">Dry run ›</div></button>`).join('')}</div>`;
 V.overlay = () => `<h1>Overlay clip</h1><p class="sub">text-overlay skill · dry run with the cost first.</p>
   <textarea id="ovl" class="field" placeholder="The text on the clip, and the idea for the shot"></textarea><div style="height:10px"></div>
   <button class="btn" ${dis()} onclick="A.runText('overlay','ovl')">Dry run</button>`;
@@ -454,7 +457,7 @@ V.upscale = () => `<h1>Upscale queue</h1><p class="sub">video-upscale · approve
 V.capcut = () => !S.reels ? loading() : `<h1>CapCut</h1><p class="sub">capcut-finishing · get the steps, edit in CapCut Pro, then upload the export here (no Telegram size limit while the laptop is on).</p>
   ${S.upl ? `<div class="card"><b>Uploading ${esc(S.upl.name)}</b><div class="mut">${S.upl.pct}%</div></div>` : ''}
   <div class="list">${S.reels.filter(r => ['capcut', 'upscaled', 'approved'].includes(r.stage)).map(r => `<div class="item"><div class="ic">✂️</div><div class="tx"><b>${esc(r.id)} · ${esc(r.slug)}</b><span>${esc(r.status)}</span></div>
-    <div class="end" style="display:flex;gap:6px"><button class="btn small sec" ${dis()} onclick="A.run('capcut',{ref:'${r.id}'})">Steps</button><button class="btn small" ${dis()} onclick="A.pickFinal('${r.id}')">⬆ Final</button></div></div>`).join('') || '<div class="item mut">Nothing waiting for CapCut</div>'}</div>
+    <div class="end" style="display:flex;gap:6px"><button class="btn small sec" ${dis()} onclick="A.run('capcut',{ref:${q(r.id)}})">Steps</button><button class="btn small" ${dis()} onclick="A.pickFinal(${q(r.id)})">⬆ Final</button></div></div>`).join('') || '<div class="item mut">Nothing waiting for CapCut</div>'}</div>
   <button class="btn sec" ${dis()} onclick="A.pickFinal('')">⬆ Upload another export</button>`;
 V.ask = () => `<h1>Ask Hermes</h1><p class="sub">Same Hermes, skills and rules as on the laptop.</p>
   <textarea id="askt" class="field" placeholder="Ask or tell Hermes anything…"></textarea><div style="height:10px"></div>
@@ -490,7 +493,7 @@ function ddPanel(key, label, items) {
   const q = (S.ddq[key] || '').toLowerCase();
   return `<div class="ddp"><input class="field" style="padding:9px 11px" placeholder="Search ${label.toLowerCase()}…" value="${esc(S.ddq[key] || '')}" oninput="A.ddq('${key}',this)">
     <div class="ddrow"><button onclick="A.ddAll('${key}',true)">Select all</button><button onclick="A.ddAll('${key}',false)">Clear</button></div>
-    ${items.map(([v, l, c, txt]) => `<button class="ddi" data-txt="${esc(txt.toLowerCase())}" ${q && !txt.toLowerCase().includes(q) ? 'hidden' : ''} onclick="A.ddv('${key}','${v}')"><span class="cb ${c ? 'on' : ''}">✓</span>${l}</button>`).join('')}
+    ${items.map(([v, l, c, txt]) => `<button class="ddi" data-txt="${esc(txt.toLowerCase())}" ${q && !txt.toLowerCase().includes(q) ? 'hidden' : ''} onclick="A.ddv('${key}',${q(v)})"><span class="cb ${c ? 'on' : ''}">✓</span>${l}</button>`).join('')}
     <button class="btn small sec" style="width:100%;margin-top:6px" onclick="A.dd(null)">Done</button></div>`;
 }
 V.schedule = () => {
@@ -512,7 +515,7 @@ V.schedule = () => {
     return `<div class="day">${dn} ${d.getDate()} ${MONN[d.getMonth()]}<span>${iso(d) === today ? 'today' : ''}</span></div><div class="list">${dr.map(postItem).join('')}</div>`; }).join('') || (s.data ? '<div class="card mut">Nothing matches the filters.</div>' : '')}</div>
   <div class="week">${DAYN.map((dn, i) => { const d = dayIso(i), dr = rows.filter(r => r.day === iso(d));
     return `<div class="dayc ${iso(d) === today ? 'today' : ''}"><h4>${dn} ${d.getDate()}<span>${iso(d) === today ? 'today' : MONN[d.getMonth()]}</span></h4>
-    ${dr.map(r => r.status === 'missing' ? `<button class="post missing" onclick="A.fill('${esc(r.day)}','${esc(r.ny)}','${esc(r.il)}')"><b>＋ Empty reel slot</b><div class="t">${esc(r.ny)} NY · ${esc(r.il)} IL</div></button>`
+    ${dr.map(r => r.status === 'missing' ? `<button class="post missing" onclick="A.fill(${q(r.day)},${q(r.ny)},${q(r.il)})"><b>＋ Empty reel slot</b><div class="t">${esc(r.ny)} NY · ${esc(r.il)} IL</div></button>`
       : `<div class="post ${r.status}"><b>${ICON[r.type]} ${r.type}${r.status === 'posted' ? ' · ✓' : r.status === 'failed' ? ' · ❌' : ''}</b>${esc(r.title)}<div class="t">${esc(r.ny)} NY · ${esc(r.il)} IL</div></div>`).join('')}</div>`; }).join('')}</div>`;
 };
 
@@ -523,7 +526,7 @@ V.addcreator = () => `<h1>Add a creator</h1><p class="sub">She shows up in the c
   <p class="mut" style="margin:6px 0 12px">Without it her schedule stays empty; add it later by adding her again.</p>
   <button class="btn" onclick="A.addCreator()">＋ Add her</button>`;
 V.creatordone = () => { const c = CRS().find(x => x.id === S.cr) || CR(); return `<h1>${avatar(40)} ${esc(c.name)} added</h1>
-  <div class="list"><button class="item" onclick="A.pickAvatar('${esc(c.id)}')"><div class="ic">📷</div><div class="tx"><b>${c.avatar ? 'Change her photo' : 'Add her photo'}</b><span>JPG or PNG, square works best</span></div><div class="end">›</div></button></div>
+  <div class="list"><button class="item" onclick="A.pickAvatar(${q(c.id)})"><div class="ic">📷</div><div class="tx"><b>${c.avatar ? 'Change her photo' : 'Add her photo'}</b><span>JPG or PNG, square works best</span></div><div class="end">›</div></button></div>
   <h2>Next: her project</h2><p class="sub">Hermes plans the folder, persona and the five reference images. Free until you say yes; images are paid.</p>
   <button class="btn" onclick="A.run('ask',{extra:${esc(JSON.stringify(`Set up a new AI model for the AI OFM Creator app: name ${c.name}, Instagram ${c.handle || '(none yet)'}. Plan only, change nothing yet: her project folder next to the main creator's project, what the persona needs from me, and the reference-images skill plan with its cost (dry run). Ask me what you need.`))}})">🧭 Plan her project with Hermes</button>`; };
 
@@ -571,21 +574,21 @@ V.appearance = () => `<h1>Appearance</h1><p class="sub">Saved to your Telegram a
 
 /* ---------------------------------------------------------------- sheets */
 const SHEETS = {
-  creators: () => `<h3>Creators</h3><div class="list">${CRS().map(c => `<button class="item" onclick="A.pickCreator('${esc(c.id)}')">${avatarOf(c, 34)}<div class="tx"><b>${esc(c.name)}${c.main ? ' · main' : ''}</b><span>${esc(c.handle || '')}${c.metricool ? ' · Metricool ✓' : ' · no Metricool brand'}</span></div><div class="end">${c.id === CR().id ? '✓' : ''}</div></button>`).join('')}
+  creators: () => `<h3>Creators</h3><div class="list">${CRS().map(c => `<button class="item" onclick="A.pickCreator(${q(c.id)})">${avatarOf(c, 34)}<div class="tx"><b>${esc(c.name)}${c.main ? ' · main' : ''}</b><span>${esc(c.handle || '')}${c.metricool ? ' · Metricool ✓' : ' · no Metricool brand'}</span></div><div class="end">${c.id === CR().id ? '✓' : ''}</div></button>`).join('')}
     <button class="item" onclick="A.sheet(null);A.go('addcreator')"><div class="ic">＋</div><div class="tx"><b>Add a creator</b><span>Name, Instagram, Metricool brand, photo</span></div><div class="end">›</div></button></div>`,
   wm: () => `<h3>Open the app as</h3>${WMODES.map(([k, i, n, d]) => `<button class="item" onclick="A.wm('${k}')"><div class="ic">${i}</div><div class="tx" style="white-space:normal"><b>${n}</b><span style="white-space:normal">${d}</span></div><div class="end">${S.wm === k ? '✓' : ''}</div></button>`).join('')}`,
   reject: s => `<h3>Reject ${esc(s.arg)}?</h3><p class="mut">The take moves to Reels/Raw/Rejected (nothing is deleted). A new attempt needs a new dry run and your yes.</p>
     <textarea id="why" class="field" placeholder="Why? (Hermes logs your words)"></textarea><div style="height:10px"></div>
-    <div style="display:grid;gap:8px"><button class="btn sec" onclick="A.sheet(null)">Keep it</button><button class="btn" style="background:var(--err)" onclick="A.reject('${esc(s.arg)}')">Reject the take</button></div>`,
+    <div style="display:grid;gap:8px"><button class="btn sec" onclick="A.sheet(null)">Keep it</button><button class="btn" style="background:var(--err)" onclick="A.reject(${q(s.arg)})">Reject the take</button></div>`,
   delscript: s => `<h3 style="color:var(--err)">🗑 Delete ${esc(s.arg)}?</h3><p class="mut">It moves to the bank’s Deleted file on the laptop (nothing is erased). You can undo it for 10 seconds.</p>
-    <div style="display:grid;gap:8px"><button class="btn sec" onclick="A.sheet(null)">Keep it</button><button class="btn" style="background:var(--err)" onclick="A.delScript('${esc(s.arg)}')">Delete script</button></div>`,
+    <div style="display:grid;gap:8px"><button class="btn sec" onclick="A.sheet(null)">Keep it</button><button class="btn" style="background:var(--err)" onclick="A.delScript(${q(s.arg)})">Delete script</button></div>`,
   delchats: s => `<h3 style="color:var(--err)">🗑 Remove ${s.arg.threads.length} chat${s.arg.threads.length === 1 ? '' : 's'}?</h3><p class="mut">${s.arg.label === 'one' ? 'This chat leaves' : s.arg.label === 'all' ? 'Every chat leaves' : 'The chats the filters show leave'} the app’s history (running ones stay). Nothing is erased on the laptop. You can undo it for 10 seconds.</p>
     <div style="display:grid;gap:8px"><button class="btn sec" onclick="A.sheet(null)">Keep ${s.arg.threads.length === 1 ? 'it' : 'them'}</button><button class="btn" style="background:var(--err)" onclick="A.removeChats(${esc(JSON.stringify(s.arg.threads))})">Remove</button></div>`,
   over10: s => `<h3>⚠️ This costs $${s.arg.cost.toFixed(2)}</h3><p class="mut">Above your $10 warning line. One yes = one paid attempt.</p>
-    <div style="display:grid;gap:8px"><button class="btn" onclick="A.yesGo('${s.arg.id}','',true)">Yes, spend $${s.arg.cost.toFixed(2)}</button>
-    <button class="btn sec" onclick="A.yesGo('${s.arg.id}','Make only 1 take instead of the full batch (one paid attempt).',true,true)">Make 1 take</button><button class="btn danger" onclick="A.sheet(null)">Cancel</button></div>`,
+    <div style="display:grid;gap:8px"><button class="btn" onclick="A.yesGo(${q(s.arg.id)},'',true)">Yes, spend $${s.arg.cost.toFixed(2)}</button>
+    <button class="btn sec" onclick="A.yesGo(${q(s.arg.id)},'Make only 1 take instead of the full batch (one paid attempt).',true,true)">Make 1 take</button><button class="btn danger" onclick="A.sheet(null)">Cancel</button></div>`,
   fill: s => `<h3>Fill the ${esc(s.arg.day)} · ${esc(s.arg.ny)} NY (${esc(s.arg.il)} Israel) slot</h3><p class="mut">Hermes picks a ready reel (or says what to make) and shows a metricool-scheduler dry run. Nothing is scheduled without your yes.</p>
-    <button class="btn" onclick="A.run('fill_slot',{extra:'${esc(s.arg.day)} ${esc(s.arg.ny)} New York (${esc(s.arg.il)} Israel) reel'})">Ask Hermes</button>`,
+    <button class="btn" onclick="A.run('fill_slot',{extra:${q(`${s.arg.day} ${s.arg.ny} New York (${s.arg.il} Israel) reel`)}})">Ask Hermes</button>`,
 };
 
 /* ---------------------------------------------------------------- actions */
