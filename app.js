@@ -252,7 +252,7 @@ function tgColors() {
 }
 function render() {
   document.body.className = 't-' + S.theme;
-  const launch = S.launchBrowser ? `<div class="card launchb"><b>🖥 Full screen windowed</b><p class="mut" style="margin:4px 0 10px">The app opens in your browser. If it didn’t, tap Open in browser.</p>
+  const launch = S.launchBrowser ? `<div class="card launchb"><b>🖥 Full screen windowed</b><p class="mut" style="margin:4px 0 10px">The app opens in your browser and this window closes. If it didn’t, tap Open in browser.</p>
     <div class="row"><button class="btn" onclick="A.openBrowser()">Open in browser</button><button class="btn sec" onclick="tg.close()">Close this window</button><button class="btn sec" onclick="S.launchBrowser=false;render()">Stay here</button></div></div>` : '';
   const v = launch + (['home', 'reels', 'create', 'scripts', 'spending'].includes(S.view) ? notMain() : '') + (V[S.view] || V.home)();
   keepFocus(() => { $app.innerHTML = side() + `<div class="col">${bar()}<main class="main">${v}</main></div>` + tabs(); restoreDrafts($app); });
@@ -684,9 +684,16 @@ const A = window.A = {
     S.rec = {id, mr, t0: Date.now()}; mr.start(); haptic('light'); render();
     S.rec.timer = setInterval(() => { const b = document.querySelector('.mic.rec'); if (b) b.textContent = '⏹ ' + Math.floor((Date.now() - S.rec.t0) / 1000) + 's'; if (Date.now() - S.rec.t0 > 300000) stopRec(); }, 500);
   },
-  async openBrowser() {
-    try { const r = await api('browser_link'); tg.openLink(BASE + r.path); toast('🖥 Opening in your browser… maximize it once; the browser keeps the size.', 'ok'); }
-    catch (e) { toast('❌ ' + e.message, 'err'); }
+  async openBrowser(auto = false) {
+    try {
+      const r = await api('browser_link'); tg.openLink(BASE + r.path);
+      toast('🖥 Opening in your browser…', 'ok');
+      // Close the Telegram window once the browser has it: when the browser takes focus (blur), or after a tap
+      // anyway. At launch (no tap) only on blur, so if Telegram didn't open the link the card stays to tap.
+      const shut = () => { window.removeEventListener('blur', shut); setTimeout(() => tg.close(), 300); };
+      window.addEventListener('blur', shut);
+      setTimeout(() => { window.removeEventListener('blur', shut); if (!auto) tg.close(); }, auto ? 4000 : 1500);
+    } catch (e) { toast('❌ ' + e.message, 'err'); }
   },
 };
 
@@ -699,7 +706,7 @@ async function boot2() {
     render(); load(S.view);
     // Saved PC mode "Full screen windowed": open the browser straight away at launch (one-time sign-in link).
     // If Telegram ignores a link opened without a tap, the card at the top opens it with one tap.
-    if (DESKTOP && !SAME_ORIGIN && S.wm === 'browser' && !boot2.opened) { boot2.opened = true; S.launchBrowser = true; render(); A.openBrowser(); }
+    if (DESKTOP && !SAME_ORIGIN && S.wm === 'browser' && !boot2.opened) { boot2.opened = true; S.launchBrowser = true; render(); A.openBrowser(true); }
     S.jobs = (await api('jobs')).jobs; poll();
   } catch (e) {
     if (e.offline || !BASE && !SAME_ORIGIN) goAsleep();
