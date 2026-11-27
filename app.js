@@ -252,7 +252,9 @@ function tgColors() {
 }
 function render() {
   document.body.className = 't-' + S.theme;
-  const v = (['home', 'reels', 'create', 'scripts', 'spending'].includes(S.view) ? notMain() : '') + (V[S.view] || V.home)();
+  const launch = S.launchBrowser ? `<div class="card launchb"><b>🖥 Full screen windowed</b><p class="mut" style="margin:4px 0 10px">The app opens in your browser. If it didn’t, tap Open in browser.</p>
+    <div class="row"><button class="btn" onclick="A.openBrowser()">Open in browser</button><button class="btn sec" onclick="tg.close()">Close this window</button><button class="btn sec" onclick="S.launchBrowser=false;render()">Stay here</button></div></div>` : '';
+  const v = launch + (['home', 'reels', 'create', 'scripts', 'spending'].includes(S.view) ? notMain() : '') + (V[S.view] || V.home)();
   keepFocus(() => { $app.innerHTML = side() + `<div class="col">${bar()}<main class="main">${v}</main></div>` + tabs(); restoreDrafts($app); });
   if (tg) { S.stack.length && !TOP.includes(S.view) ? tg.BackButton.show() : tg.BackButton.hide(); tgColors(); }
   drawLayer();
@@ -617,7 +619,7 @@ const A = window.A = {
     if (!tg) return;
     if (k === 'full') { if (tg.requestFullscreen && tg.isVersionAtLeast('8.0')) tg.requestFullscreen(); }
     else if (tg.isFullscreen) tg.exitFullscreen();
-    if (k === 'browser') A.openBrowser();
+    if (k === 'browser') A.openBrowser(); else S.launchBrowser = false;
   },
   pickFinal(reel) {
     const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'video/mp4,video/quicktime,.mp4,.mov';
@@ -695,6 +697,9 @@ async function boot2() {
     S.user = h; S.avatar = furl(h.avatar); S.cr = (await store.get('creator')) || S.cr;
     if (!(h.creators || []).some(c => c.id === S.cr)) S.cr = ((h.creators || [])[0] || {}).id; (h.creators || []).forEach(c => { if (!(c.id in S.sched.sm)) S.sched.sm[c.id] = true; if (!(c.id in S.hist.cr)) S.hist.cr[c.id] = true; }); S.asleep = false; S.err = null;
     render(); load(S.view);
+    // Saved PC mode "Full screen windowed": open the browser straight away at launch (one-time sign-in link).
+    // If Telegram ignores a link opened without a tap, the card at the top opens it with one tap.
+    if (DESKTOP && !SAME_ORIGIN && S.wm === 'browser' && !boot2.opened) { boot2.opened = true; S.launchBrowser = true; render(); A.openBrowser(); }
     S.jobs = (await api('jobs')).jobs; poll();
   } catch (e) {
     if (e.offline || !BASE && !SAME_ORIGIN) goAsleep();
