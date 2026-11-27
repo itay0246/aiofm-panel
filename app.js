@@ -22,7 +22,7 @@ const DAYN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], MONN = ['Jan', '
 const S = {view: 'home', stack: [], theme: 'creator', wm: 'full', user: null, avatar: null, home: null, asleep: false, snapAt: null,
   err: null, reels: null, reelStage: 'all', reel: null, scripts: null, script: null, jobs: [], job: null, sheet: null,
   sched: {wk: 0, data: null, loading: false, sm: {}, types: Object.fromEntries(TYPES.map(t => [t, true])),
-    stat: Object.fromEntries(STATS.map(s => [s[0], true])), dd: null, ddq: {}}, spend: null, lessons: null, accounts: null, laptop: null};
+    stat: Object.fromEntries(STATS.map(s => [s[0], true])), dd: null, ddq: {}}, dd: null, ddq: {}, hist: {cr: {}, kind: {ask: true, copy: true, take: true, overlay: true, scripts: true, reels: true, sched: true, other: true}, stat: {waiting: true, running: true, done: true, failed: true}}, refreshing: false, spend: null, lessons: null, accounts: null, laptop: null};
 
 /* ---------------------------------------------------------------- helpers */
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
@@ -131,7 +131,7 @@ const TOP = ['home', 'reels', 'create', 'schedule', 'more'];
 function go(view, push = true) {
   if (push && view !== S.view) S.stack.push(S.view);
   if (TOP.includes(view)) S.stack = [];
-  S.view = view; S.sheet = null; S.sched.dd = null;
+  S.view = view; S.sheet = null; S.dd = null;
   load(view); render(); window.scrollTo(0, 0);
   const m = document.querySelector('.main'); if (m) m.scrollTop = 0;
 }
@@ -145,10 +145,10 @@ async function load(view) {
   if (S.asleep) return;
   try {
     if (view === 'home') { S.home = await api('home'); saveSnap(); }
-    else if (view === 'reels' || view === 'capcut') { S.reels = (await api('reels')).reels; }
+    else if (view === 'reels' || view === 'capcut') { S.reels = (await api('reels')).reels; S.jobs = (await api('jobs')).jobs; }
     else if (['scripts', 'take'].includes(view)) { S.scripts = (await api('scripts')).scripts; }
     else if (view === 'schedule') { await loadWeek(); return; }
-    else if (['history', 'results', 'ask', 'photos', 'upscale'].includes(view)) { S.jobs = (await api('jobs')).jobs; }
+    else if (['history', 'results', 'ask', 'photos', 'upscale', 'job'].includes(view)) { S.jobs = (await api('jobs')).jobs; }
     else if (view === 'spending') { S.spend = await api('spending'); }
     else if (view === 'lessons') { S.lessons = await api('lessons'); }
     else if (view === 'accounts') { S.accounts = (await api('accounts')).accounts; }
@@ -189,7 +189,7 @@ async function retry() { S.asleep = false; S.err = null; render(); await boot2()
 async function run(kind, opts = {}) {
   try {
     const from = dkey('').replace(/:$/, ''), fromView = S.view;
-    const j = await api('run', {kind, ...opts});
+    const j = await api('run', {kind, ...(opts.thread ? {} : {creator: S.cr}), ...opts});
     if (S.toastObj && S.toastObj.kind === 'err') S.toastObj = null;
     if (S.asleep) { S.asleep = false; S.err = null; api('home').then(h => { S.home = h; saveSnap(); }).catch(() => {}); }
     clearDrafts(fromView === 'script' ? '\u0000' : from);
@@ -285,6 +285,7 @@ V.home = () => {
     <div class="list">${di.map(postItem).join('') || '<div class="item mut">Nothing scheduled</div>'}</div>`; }).join('') || (h.schedule_error ? `<div class="card banner err">Metricool: ${esc(h.schedule_error)}</div>` : '')}
   </div><div>
   <h2>Missing (next 2 days)</h2>${miss.length ? `<div class="card" style="background:var(--warnbg);color:var(--warn);border-color:transparent"><b>${miss.length} empty reel slot${miss.length > 1 ? 's' : ''}</b> on ${[...new Set(miss.map(m => { const d = new Date(m.day + 'T12:00:00'); return DAYN[(d.getDay() + 6) % 7] + ' ' + d.getDate(); }))].join(', ')}.<br>Tap one in the list to fill it.</div>` : '<div class="card mut">✓ Nothing missing for the next 2 days.</div>'}
+  ${waitingThreads().length ? `<button class="card" style="width:100%" onclick="A.reelFilter('waiting')">⏳ <b>${waitingThreads().length} plan${waitingThreads().length > 1 ? 's' : ''} waiting for your answer</b> <span class="mut">›</span></button>` : ''}
   ${r.review ? `<button class="card" style="width:100%" onclick="A.reelFilter('review')">🎬 <b>${r.review} take${r.review > 1 ? 's' : ''} waiting for your review</b> <span class="mut">›</span></button>` : ''}
   ${r.capcut ? `<button class="card" style="width:100%" onclick="A.reelFilter('capcut')">✂️ <b>${r.capcut} reel${r.capcut > 1 ? 's' : ''} ready for CapCut</b> <span class="mut">›</span></button>` : ''}
   <h2>Hermes jobs<span class="sp"></span><button class="lnk" onclick="A.go('history')">All ›</button></h2>
@@ -300,34 +301,66 @@ const postItem = i => {
   if (i.status === 'missing') return `<button class="item empty" onclick="A.fill('${esc(i.day)}','${esc(i.ny)}')"><div class="ic">＋</div><div class="tx"><b>${esc(i.title)}</b><span style="color:inherit">tap to fill it</span></div><div class="end" style="color:inherit"><b style="color:inherit">${esc(i.ny)}</b>${esc(i.il)} IL</div></button>`;
   return `<div class="item ${i.status === 'failed' ? 'failed' : ''}"><div class="ic">${ICON[i.type] || '•'}</div><div class="tx"><b>${esc(i.type)} ${tag}</b><span>${esc(i.title)}</span></div><div class="end"><b>${esc(i.ny)}</b>${esc(i.il)} IL</div></div>`;
 };
+// ---- chats (a chat = a thread of jobs: the first one plus replies, yes, cancel)
+const KGROUPS = [['ask', '💬 Ask Hermes', ['ask']], ['copy', '🔁 Copy', ['copy']], ['take', '🎬 Takes', ['take']], ['overlay', '🔤 Overlay', ['overlay']],
+  ['scripts', '✍️ Scripts', ['ideas', 'script_full', 'rewrite']], ['reels', '🎞 Reels', ['approve', 'reject', 'upscale', 'capcut']],
+  ['sched', '📅 Schedule', ['fill_slot']], ['other', '📊 Results + more', ['results', 'brief', 'photos']]];
+const HSTATS = [['waiting', 'Waiting for you'], ['running', 'Working'], ['done', 'Done'], ['failed', 'Failed']];
+const PLAN_KINDS = ['copy', 'take', 'overlay', 'upscale', 'fill_slot'];
+function threadInfo(th) {
+  const jobs = (S.jobs || []).filter(x => x.thread === th).sort((a, b) => a.started - b.started);
+  const root = jobs[0], last = jobs[jobs.length - 1];
+  let cost = null, costJob = null, closed = false;
+  for (const x of jobs) {
+    if (x.kind === 'yes' || x.kind === 'cancel') { cost = null; costJob = null; closed = true; }
+    else if (x.status === 'done' && x.cost_usd != null) { cost = x.cost_usd; costJob = x; closed = false; }
+  }
+  const running = jobs.some(x => x.status === 'running');
+  const waiting = !running && last.status === 'done' && !['yes', 'cancel'].includes(last.kind) && (cost != null || (PLAN_KINDS.includes(root.kind) && !closed));
+  const group = (KGROUPS.find(g => g[2].includes(root.kind)) || ['other'])[0];
+  const creator = root.creator || (CRS().find(c => c.main) || CR()).id;
+  return {thread: th, jobs, root, last, cost: running ? null : cost, costJob, waiting, group, creator,
+    status: running ? 'running' : waiting ? 'waiting' : last.status === 'failed' ? 'failed' : 'done'};
+}
+const allThreads = () => [...new Set((S.jobs || []).map(x => x.thread))].map(threadInfo).sort((a, b) => b.last.started - a.last.started);
+const waitingThreads = () => allThreads().filter(x => x.waiting);
+const chatItem = (x, del = false) => { const c = CRS().find(k => k.id === x.creator);
+  return `<div class="item chat ${x.status === 'failed' ? 'failed' : ''}"><button class="chatopen" onclick="A.openJob('${x.last.id}')"><div class="ic">${x.status === 'running' ? '<span class="spin"></span>' : x.status === 'waiting' ? '⏳' : x.status === 'done' ? '✅' : '❌'}</div>
+  <div class="tx"><b>${esc(x.root.title)}${x.jobs.length > 1 ? ` <span class="mut">· ${x.jobs.length}</span>` : ''}</b><span>${x.status === 'waiting' ? (x.cost != null ? `waiting for your yes · $${x.cost.toFixed(2)}` : 'waiting for your answer') : x.status === 'running' ? 'working… ' + ago(x.last.started) : x.status === 'failed' ? esc(x.last.error) : esc((x.last.answer || '').slice(0, 90))}</span></div>
+  <div class="end">${c && CRS().length > 1 ? avatarOf(c, 18) : ''}${ago(x.last.started)}</div></button>
+  ${del && x.status !== 'running' ? `<button class="chatdel" aria-label="Remove this chat" onclick="A.sheet('delchats',{threads:['${x.thread}'],label:'one'})">🗑</button>` : ''}</div>`; };
+const refreshBtn = () => `<button class="btn small sec refresh" onclick="A.refresh()" aria-label="Refresh">${S.refreshing ? '<span class="spin"></span>' : '⟳'} Refresh</button>`;
 const jobItem = j => `<button class="item ${j.status === 'failed' ? 'failed' : ''}" onclick="A.openJob('${j.id}')"><div class="ic">${j.status === 'running' ? '<span class="spin"></span>' : j.status === 'done' ? '✅' : '❌'}</div>
   <div class="tx"><b>${esc(j.title)}</b><span>${j.status === 'running' ? 'working… ' + ago(j.started) : j.status === 'failed' ? esc(j.error) : esc((j.answer || '').slice(0, 90))}</span></div><div class="end">${ago(j.started)}</div></button>`;
 
 V.job = () => {
   const j = S.jobs.find(x => x.id === S.job);
   if (!j) return loading();
-  const thread = S.jobs.filter(x => x.thread === j.thread).sort((a, b) => a.started - b.started);
-  const last = thread[thread.length - 1];
-  const cost = last.status === 'done' && last.cost_usd != null ? last.cost_usd : null;
+  const ti = threadInfo(j.thread), thread = ti.jobs, last = ti.last;
+  const cost = ti.cost;
   return `<h1>${esc(thread[0].title)}</h1><p class="sub">Hermes · ${thread.length} step${thread.length > 1 ? 's' : ''}</p>
   ${thread.map(x => `<div class="card"><div class="mut" style="font-size:12px;margin-bottom:6px">${esc(x.title)} · ${clock(x.started)}</div>
     ${x.status === 'running' ? `<div class="mut"><span class="spin"></span> Working… ${ago(x.started)} — you can close the app, Telegram tells you when it’s done.</div>`
       : x.status === 'failed' ? `<div style="color:var(--err)"><b>❌ It failed</b><br>${esc(x.error)}</div>${x.answer ? `<div class="ans" style="margin-top:8px">${md(x.answer)}</div>` : ''}`
       : `<div class="ans">${md(x.answer)}</div>`}</div>`).join('')}
   ${last.status === 'running' ? '' : `
-    ${cost != null ? `<button class="btn" ${dis()} onclick="A.yes('${last.id}')">✅ Yes, spend $${cost.toFixed(2)}</button><div style="height:8px"></div>` : ''}
+    ${cost != null ? `<button class="btn" ${dis()} onclick="A.yes('${ti.costJob.id}')">✅ Yes, spend $${cost.toFixed(2)}</button><div style="height:8px"></div>` : ''}
     ${last.status === 'failed' ? `<button class="btn" ${dis()} onclick="A.again('${last.id}')">↻ Try again</button><div style="height:8px"></div>` : ''}
     <textarea id="reply" class="field" placeholder="${cost != null ? 'Change something, or ask…' : 'Reply to Hermes…'}"></textarea>
     <div class="row" style="margin-top:8px"><button class="btn sec" ${dis()} onclick="A.reply('${last.thread}')">Send</button>
-    ${cost != null ? `<button class="btn danger" onclick="A.cancelJob('${last.thread}')">Cancel</button>` : ''}</div>`}`;
+    ${ti.waiting ? `<button class="btn danger" onclick="A.cancelJob('${last.thread}')">✕ Cancel plan</button>` : ''}</div>`}`;
 };
 
 V.reels = () => {
   if (!S.reels) return loading();
-  const chips = ['all', 'review', 'capcut', 'ready', 'scheduled', 'rejected'];
+  const chips = ['waiting', 'all', 'review', 'capcut', 'ready', 'scheduled', 'rejected'];
+  const wait = waitingThreads();
+  if (S.reelStage === 'waiting') return `<div class="chips">${chips.map(c => `<button class="chip ${S.reelStage === c ? 'on' : ''}" onclick="A.reelFilter('${c}')">${c === 'waiting' ? '⏳ Waiting for you' : c === 'all' ? 'All' : STAGE[c][0]} ${c === 'waiting' ? wait.length : c === 'all' ? S.reels.length : S.reels.filter(r => r.stage === c).length}</button>`).join('')}</div>
+    <p class="sub" style="margin:10px 0 6px">Plans Hermes made that wait for your answer (yes, a change, or cancel).</p>
+    <div class="list">${wait.map(chatItem).join('') || '<div class="item mut">Nothing is waiting for you.</div>'}</div>`;
   const list = S.reels.filter(r => S.reelStage === 'all' || r.stage === S.reelStage || (S.reelStage === 'capcut' && ['approved', 'upscaled'].includes(r.stage)));
   const detail = S.reel ? reelDetail(S.reels.find(r => r.id === S.reel)) : '';
-  return `<div class="chips">${chips.map(c => `<button class="chip ${S.reelStage === c ? 'on' : ''}" onclick="A.reelFilter('${c}')">${c === 'all' ? 'All' : STAGE[c][0]} ${c === 'all' ? S.reels.length : S.reels.filter(r => r.stage === c).length}</button>`).join('')}</div>
+  return `<div class="chips">${chips.map(c => `<button class="chip ${S.reelStage === c ? 'on' : ''}" onclick="A.reelFilter('${c}')">${c === 'waiting' ? '⏳ Waiting for you' : c === 'all' ? 'All' : STAGE[c][0]} ${c === 'waiting' ? wait.length : c === 'all' ? S.reels.length : S.reels.filter(r => r.stage === c).length}</button>`).join('')}</div>
   <div class="pcgrid"><div class="list">${list.map(r => `<button class="item" onclick="A.openReel('${r.id}')"><div class="ic">🎬</div><div class="tx"><b>${esc(r.id)} · ${esc(r.slug)}</b><span>${esc(r.status)}</span></div><div class="end"><span class="tag ${STAGE[r.stage][1]}">${STAGE[r.stage][0]}</span></div></button>`).join('') || '<div class="item mut">None</div>'}</div>
   <div class="${detail ? '' : 'hide'}" id="pcdetail">${detail}</div></div>`;
 };
@@ -413,15 +446,15 @@ async function loadWeek(sync = false) {
   }
   S.sched.loading = false; render();
 }
-const SEL = k => k === 'creators' ? S.sched.sm : k === 'types' ? S.sched.types : S.sched.stat;
+const SEL = k => ({creators: S.sched.sm, types: S.sched.types, stat: S.sched.stat, hcr: S.hist.cr, hkind: S.hist.kind, hstat: S.hist.stat})[k];
 function ddBtn(key, label, items) {
   const n = items.filter(x => x[2]).length;
   const val = n === items.length ? 'All' : n === 0 ? 'None' : n === 1 ? items.find(x => x[2])[3] : `${n} selected`;
-  return `<button class="ddb ${S.sched.dd === key ? 'open' : ''}" onclick="A.dd('${key}')"><small>${label}</small><b>${esc(val)} ▾</b></button>`;
+  return `<button class="ddb ${S.dd === key ? 'open' : ''}" onclick="A.dd('${key}')"><small>${label}</small><b>${esc(val)} ▾</b></button>`;
 }
 function ddPanel(key, label, items) {
-  const q = (S.sched.ddq[key] || '').toLowerCase();
-  return `<div class="ddp"><input class="field" style="padding:9px 11px" placeholder="Search ${label.toLowerCase()}…" value="${esc(S.sched.ddq[key] || '')}" oninput="A.ddq('${key}',this)">
+  const q = (S.ddq[key] || '').toLowerCase();
+  return `<div class="ddp"><input class="field" style="padding:9px 11px" placeholder="Search ${label.toLowerCase()}…" value="${esc(S.ddq[key] || '')}" oninput="A.ddq('${key}',this)">
     <div class="ddrow"><button onclick="A.ddAll('${key}',true)">Select all</button><button onclick="A.ddAll('${key}',false)">Clear</button></div>
     ${items.map(([v, l, c, txt]) => `<button class="ddi" data-txt="${esc(txt.toLowerCase())}" ${q && !txt.toLowerCase().includes(q) ? 'hidden' : ''} onclick="A.ddv('${key}','${v}')"><span class="cb ${c ? 'on' : ''}">✓</span>${l}</button>`).join('')}
     <button class="btn small sec" style="width:100%;margin-top:6px" onclick="A.dd(null)">Done</button></div>`;
@@ -467,24 +500,36 @@ V.more = () => `<h1>More</h1><div class="list">${[['results', '📊', 'Results',
   .map(([v, ic, n, d]) => `<button class="item" onclick="A.go('${v}')"><div class="ic">${ic}</div><div class="tx"><b>${n}</b><span>${d}</span></div><div class="end">›</div></button>`).join('')}</div>`;
 V.results = () => `<h1>Results</h1><p class="sub">performance-review skill reads Metricool and tells you what to make next.</p>
   <button class="btn" ${dis()} onclick="A.run('results')">📊 Review the last 7 days</button>${jobList(['results'])}`;
-V.lessons = () => !S.lessons ? loading() : `<h1>Lessons</h1><p class="sub">From ${esc(S.lessons.path)}</p>
+V.lessons = () => !S.lessons ? loading() : `<h1 class="hrow">Lessons<span class="sp"></span>${refreshBtn()}</h1><p class="sub">From ${esc(S.lessons.path)}</p>
   ${S.lessons.items.length ? `<div class="list">${S.lessons.items.map(l => `<div class="item"><div class="ic">🧠</div><div class="tx" style="white-space:normal"><span style="white-space:normal;color:var(--ink)">${esc(l)}</span></div></div>`).join('')}</div>
   <button class="btn" ${dis()} onclick="A.run('ask',{extra:'Show the lessons in My AI Model\\\\Telegram\\\\lessons-inbox.md that are not applied yet. For each: my words, the skill, and the exact proposed change. Change nothing until I say which to apply.'})">Review them with Hermes</button>`
   : '<div class="card mut">No lessons yet. When you correct Hermes, your words are saved here and turned into proposed skill changes.</div>'}`;
 V.spending = () => { const s = S.spend; if (!s) return loading(); const b = s.balances || {};
-  return `<h1>Spending</h1><p class="sub">Last ${s.days} days, from the attempt log (what kie.ai charged).</p>
+  return `<h1 class="hrow">Spending<span class="sp"></span>${refreshBtn()}</h1><p class="sub">Last ${s.days} days, from the attempt log (what kie.ai charged).</p>
   <div class="grid2"><div class="card"><div class="mut">This week</div><div class="big">${esc(s.usd)}</div><div class="mut">${Math.round(s.credits).toLocaleString('en-US')} cr</div></div>
   <div class="card"><div class="mut">kie.ai balance</div><div class="big">${b.kie_cr != null ? esc(b.kie_usd) : 'n/a'}</div><div class="mut">${b.kie_cr != null ? Math.round(b.kie_cr).toLocaleString('en-US') + ' cr' : esc((b.errors || []).join(', '))}</div></div>
   <div class="card"><div class="mut">WaveSpeed</div><div class="big">${b.wavespeed_usd != null ? '$' + b.wavespeed_usd.toFixed(2) : 'n/a'}</div><div class="mut">upscales</div></div></div>
   <h2>Where it went</h2><div class="list">${s.by_reel.map(r => `<div class="item"><div class="ic">🎬</div><div class="tx"><b>${esc(r.id)}</b></div><div class="end"><b>${esc(r.usd)}</b>${Math.round(r.credits)} cr</div></div>`).join('') || '<div class="item mut">Nothing spent this week</div>'}</div>
   <p class="mut">Warning above $10 (2,000 cr) per request · no daily cap · 1 cr ≈ $0.005.</p>`; };
-V.history = () => `<h1>Chat history</h1><p class="sub">Every Hermes job started from the app.</p>${(S.jobs || []).length ? `<div class="list">${S.jobs.map(jobItem).join('')}</div>` : '<div class="card mut">Nothing yet.</div>'}`;
+V.history = () => {
+  const h = S.hist, all = allThreads();
+  const cr = (CRS().length ? CRS() : [CR()]).map(c => [c.id, `${avatarOf(c, 22)}<span>${esc(c.name)}</span>`, h.cr[c.id] !== false, c.name]);
+  const kd = KGROUPS.map(([k, l]) => [k, `<span>${l}</span>`, h.kind[k] !== false, l]);
+  const st = HSTATS.map(([k, l]) => [k, `<span class="sdot h-${k}"></span><span>${l}</span>`, h.stat[k] !== false, l]);
+  const rows = all.filter(x => h.cr[x.creator] !== false && h.kind[x.group] !== false && h.stat[x.status] !== false);
+  return `<h1 class="hrow">Chat history<span class="sp"></span>${refreshBtn()}</h1><p class="sub">Every Hermes chat started from the app · ${all.length} chats</p>
+  <div class="ddbar">${ddBtn('hcr', 'Creators', cr)}${ddBtn('hkind', 'Type', kd)}${ddBtn('hstat', 'Status', st)}
+    <button class="btn small sec" ${rows.length ? '' : 'disabled'} onclick="A.sheet('delchats',{threads:${esc(JSON.stringify(rows.filter(x => x.status !== 'running').map(x => x.thread)))},label:'${rows.length === all.length ? 'all' : 'the shown'}'})">🗑 Remove</button></div>
+  ${S.dd ? ddPanel(S.dd, {hcr: 'Creators', hkind: 'Type', hstat: 'Status'}[S.dd], {hcr: cr, hkind: kd, hstat: st}[S.dd]) : ''}
+  <div style="height:10px"></div>
+  ${all.length ? `<div class="list">${rows.map(x => chatItem(x, true)).join('') || '<div class="item mut">Nothing matches the filters.</div>'}</div>` : '<div class="card mut">Nothing yet.</div>'}`;
+};
 V.laptop = () => { const l = (S.laptop || {}).laptop || (S.home || {}).laptop; if (!l) return loading();
-  return `<h1>Bot + laptop</h1><div class="card"><dl class="kv"><dt>Laptop</dt><dd>${S.asleep ? '💤 asleep' : '● awake'}</dd><dt>Power</dt><dd>${l.power && l.power.charger ? '🔌 charger' : '🔋 battery'}${l.power && l.power.battery != null ? ' · ' + l.power.battery + '%' : ''}</dd>
+  return `<h1 class="hrow">Bot + laptop<span class="sp"></span>${refreshBtn()}</h1><div class="card"><dl class="kv"><dt>Laptop</dt><dd>${S.asleep ? '💤 asleep' : '● awake'}</dd><dt>Power</dt><dd>${l.power && l.power.charger ? '🔌 charger' : '🔋 battery'}${l.power && l.power.battery != null ? ' · ' + l.power.battery + '%' : ''}</dd>
   <dt>Disk</dt><dd>${l.disk_gb} GB free</dd><dt>Hermes</dt><dd>${l.hermes ? '● answering' : '⚠️ not answering'}</dd><dt>App server</dt><dd>up ${ago(Date.now() / 1000 - l.app_uptime_s)}</dd>
   <dt>Time</dt><dd>${esc(l.time_ny)} NY · ${esc(l.time_il)} IL</dd><dt>Briefs</dt><dd>09:00 + 21:00 Israel</dd></dl></div>
   <p class="mut">Awake while the charger is in. On battery it sleeps; Telegram keeps your chat messages for 24 h.</p>`; };
-V.accounts = () => !S.accounts ? loading() : `<h1>Accounts</h1><div class="list">${S.accounts.map(a => `<div class="item"><div class="ic">👤</div><div class="tx"><b>${esc(a.name || 'Account')}${String(a.id) === String(S.user && S.user.id) ? ' · you' : ''}</b><span>id ${esc(a.id)}${a.since ? ' · since ' + new Date(a.since * 1000).toLocaleDateString('en-GB') : ''}</span></div></div>`).join('')}</div>
+V.accounts = () => !S.accounts ? loading() : `<h1 class="hrow">Accounts<span class="sp"></span>${refreshBtn()}</h1><div class="list">${S.accounts.map(a => `<div class="item"><div class="ic">👤</div><div class="tx"><b>${esc(a.name || 'Account')}${String(a.id) === String(S.user && S.user.id) ? ' · you' : ''}</b><span>id ${esc(a.id)}${a.since ? ' · since ' + new Date(a.since * 1000).toLocaleDateString('en-GB') : ''}</span></div></div>`).join('')}</div>
   <p class="mut">A new account sends /unlock with the password in the bot chat; you get an alert. Remove one with /accounts remove &lt;id&gt; in the chat.</p>`;
 V.appearance = () => `<h1>Appearance</h1><p class="sub">Saved to your Telegram account: the same on the phone and the PC.</p>
   <div class="list">${THEMES.map(([k, n, bg, ac]) => `<button class="item" onclick="A.theme('${k}')"><div class="ic" style="background:linear-gradient(90deg,${bg} 55%,${ac} 55%);border:1px solid var(--line)"></div><div class="tx"><b>${n}</b></div><div class="end" style="color:var(--accent);font-size:16px">${S.theme === k ? '✓' : ''}</div></button>`).join('')}</div>
@@ -500,6 +545,8 @@ const SHEETS = {
     <div style="display:grid;gap:8px"><button class="btn sec" onclick="A.sheet(null)">Keep it</button><button class="btn" style="background:var(--err)" onclick="A.reject('${esc(s.arg)}')">Reject the take</button></div>`,
   delscript: s => `<h3 style="color:var(--err)">🗑 Delete ${esc(s.arg)}?</h3><p class="mut">It moves to the bank’s Deleted file on the laptop (nothing is erased). You can undo it for 10 seconds.</p>
     <div style="display:grid;gap:8px"><button class="btn sec" onclick="A.sheet(null)">Keep it</button><button class="btn" style="background:var(--err)" onclick="A.delScript('${esc(s.arg)}')">Delete script</button></div>`,
+  delchats: s => `<h3 style="color:var(--err)">🗑 Remove ${s.arg.threads.length} chat${s.arg.threads.length === 1 ? '' : 's'}?</h3><p class="mut">${s.arg.label === 'one' ? 'This chat leaves' : s.arg.label === 'all' ? 'Every chat leaves' : 'The chats the filters show leave'} the app’s history (running ones stay). Nothing is erased on the laptop. You can undo it for 10 seconds.</p>
+    <div style="display:grid;gap:8px"><button class="btn sec" onclick="A.sheet(null)">Keep ${s.arg.threads.length === 1 ? 'it' : 'them'}</button><button class="btn" style="background:var(--err)" onclick="A.removeChats(${esc(JSON.stringify(s.arg.threads))})">Remove</button></div>`,
   over10: s => `<h3>⚠️ This costs $${s.arg.cost.toFixed(2)}</h3><p class="mut">Above your $10 warning line. One yes = one paid attempt.</p>
     <div style="display:grid;gap:8px"><button class="btn" onclick="A.yesGo('${s.arg.id}')">Yes, spend $${s.arg.cost.toFixed(2)}</button>
     <button class="btn sec" onclick="A.yesGo('${s.arg.id}','Make only 1 take instead of the full batch (one paid attempt).')">Make 1 take</button><button class="btn danger" onclick="A.sheet(null)">Cancel</button></div>`,
@@ -532,7 +579,11 @@ const A = window.A = {
       toast(`🗑 ${id} deleted`, '', true, 10000);
     } catch (e) { e.offline ? offline() : toast('❌ Not deleted · ' + e.message, 'err'); }
   },
-  async undo() { if (!lastDeleted) return; const id = lastDeleted; lastDeleted = null;
+  async undo() {
+    if (S.removed) { const r = S.removed; S.removed = null; S.toastObj = null;
+      try { await api('chats_restore', {threads: r.threads}); S.jobs = [...r.jobs, ...S.jobs].sort((a, b) => b.started - a.started); toast('↩ Chats back', 'ok'); render(); }
+      catch (e) { toast('❌ ' + e.message, 'err'); } return; }
+    if (!lastDeleted) return; const id = lastDeleted; lastDeleted = null;
     try { const r = await api('script_restore', {id}); if (!r.ok) throw new Error(r.error); S.scripts = (await api('scripts')).scripts; toast(`↩ ${id} restored`, 'ok'); render(); }
     catch (e) { toast('❌ ' + e.message, 'err'); } },
   copy() { const l = document.getElementById('link').value.trim(); if (!/^https?:\/\/(www\.)?instagram\.com\//.test(l)) return toast('Paste an Instagram link first.', 'err');
@@ -540,16 +591,26 @@ const A = window.A = {
   runText(kind, id, optional = false) { const t = document.getElementById(id).value.trim(); if (!t && !optional) return toast('Type something first.', 'err'); run(kind, {extra: t}); },
   reply(thread) { const t = document.getElementById('reply').value.trim(); if (!t) return toast('Type a reply first.', 'err'); run('reply', {extra: t, thread}); },
   again(id) { const j = S.jobs.find(x => x.id === id); run(j.kind === 'yes' ? 'reply' : 'reply', {extra: 'Try that again. ' + (j.kind === 'yes' ? 'This is a paid step: show a new dry run and wait for my yes.' : ''), thread: j.thread}); },
-  cancelJob(thread) { run('reply', {extra: 'Cancel. Don’t run anything paid for this.', thread}); },
+  cancelJob(thread) { run('cancel', {thread}); },
+  async refresh() { if (S.refreshing) return; S.refreshing = true; render();
+    await load(S.view); S.refreshing = false; render(); if (!S.asleep && !S.err) toast('⟳ Updated ' + clock(Date.now() / 1000), 'ok', null, 1800); },
+  async removeChats(threads) {
+    if (!threads.length) return A.sheet(null);
+    try { const r = await api('chats_remove', {threads}); if (!r.ok) throw new Error(r.error || 'not removed');
+      S.removed = {threads, jobs: S.jobs.filter(x => threads.includes(x.thread))}; S.jobs = S.jobs.filter(x => !threads.includes(x.thread));
+      S.sheet = null; if (S.view === 'job') { S.view = 'history'; S.stack = ['more']; } render();
+      toast(`🗑 ${threads.length} chat${threads.length === 1 ? '' : 's'} removed`, '', true, 10000);
+    } catch (e) { e.offline ? offline() : toast('❌ Not removed · ' + e.message, 'err'); }
+  },
   yes(id) { const j = S.jobs.find(x => x.id === id); if (j.cost_usd > 10) return A.sheet('over10', {id, cost: j.cost_usd}); A.yesGo(id); },
   yesGo(id, extra = '') { const j = S.jobs.find(x => x.id === id); S.sheet = null; run('yes', {thread: j.thread, extra}); },
   reject(id) { const why = document.getElementById('why').value.trim(); if (!why) return toast('Say why (Hermes logs it).', 'err'); run('reject', {ref: id, extra: why}); },
-  wk(n) { S.sched.wk = n === 0 ? 0 : S.sched.wk + n; S.sched.dd = null; S.sched.data = null; loadWeek(); },
+  wk(n) { S.sched.wk = n === 0 ? 0 : S.sched.wk + n; S.dd = null; S.sched.data = null; loadWeek(); },
   sync() { loadWeek(true); },
-  dd(k) { S.sched.dd = S.sched.dd === k ? null : k; render(); },
+  dd(k) { S.dd = S.dd === k ? null : k; render(); },
   ddv(k, v) { const b = SEL(k); b[v] = !b[v]; render(); },
   ddAll(k, on) { const b = SEL(k); Object.keys(b).forEach(x => b[x] = on); render(); },
-  ddq(k, el) { S.sched.ddq[k] = el.value; const q = el.value.toLowerCase(); el.closest('.ddp').querySelectorAll('.ddi').forEach(x => x.hidden = !!q && !x.dataset.txt.includes(q)); },
+  ddq(k, el) { S.ddq[k] = el.value; const q = el.value.toLowerCase(); el.closest('.ddp').querySelectorAll('.ddi').forEach(x => x.hidden = !!q && !x.dataset.txt.includes(q)); },
   theme(k) { S.theme = k; store.set('theme', k); render(); },
   async wm(k) {
     S.wm = k; store.set('wm', k); S.sheet = null; render();
@@ -632,7 +693,7 @@ async function boot2() {
   try {
     const h = await api('hello');
     S.user = h; S.avatar = furl(h.avatar); S.cr = (await store.get('creator')) || S.cr;
-    if (!(h.creators || []).some(c => c.id === S.cr)) S.cr = ((h.creators || [])[0] || {}).id; (h.creators || []).forEach(c => { if (!(c.id in S.sched.sm)) S.sched.sm[c.id] = true; }); S.asleep = false; S.err = null;
+    if (!(h.creators || []).some(c => c.id === S.cr)) S.cr = ((h.creators || [])[0] || {}).id; (h.creators || []).forEach(c => { if (!(c.id in S.sched.sm)) S.sched.sm[c.id] = true; if (!(c.id in S.hist.cr)) S.hist.cr[c.id] = true; }); S.asleep = false; S.err = null;
     render(); load(S.view);
     S.jobs = (await api('jobs')).jobs; poll();
   } catch (e) {
